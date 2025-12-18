@@ -1,0 +1,6 @@
+# folders to ignore (at repo root)
+/logs/
+/trained_models/
+/mmseqs/
+/temp/
+/inference_results/
