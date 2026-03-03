@@ -4,3 +4,14 @@
 /mmseqs/
 /temp/
 /inference_results/
+/trained_models_1/
+/inference_results_1/
+/trained_models_2/
+/inference_results_2/
+/trained_models_3/
+/inference_results_3/
+/trained_models_4/
+/inference_results_4/
+/trained_models_42/
+/inference_results_42/
+temp_scaling_factors_*.tsv

@@ -6,8 +6,9 @@ import numpy as np
 import pandas as pd
 from safetensors.torch import load_file
 
+from nn_proj.common.utils import enable_mc_dropout
 from nn_proj.common.datasets import load_local_dataset, load_NT_tasks, prep_for_trainer
-from nn_proj.models.epinet import EpinetConfig, EpinetWrapper, HFEpinetSeqClassifier, MLPEpinetWithPrior, predict
+from nn_proj.models.epinet import EpinetConfig, EpinetWrapper, HFEpinetSeqClassifier, MLPEpinetWithConvPrior, MLPEpinetWithPrior, predict
 from nn_proj.models.epinet.feature_fns import hyenaDNA_feature_fn
 from .config import ModelArguments, DataArguments, TrainingArguments    
 
@@ -18,21 +19,22 @@ import torch.nn as nn
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-def _enable_dropout(module: torch.nn.Module):
-    """Enable dropout modules in-place (used for MC-dropout)."""
-    if isinstance(module, (torch.nn.Dropout, torch.nn.AlphaDropout, torch.nn.FeatureAlphaDropout)):
-        module.train()
-    for child in module.children():
-        _enable_dropout(child)
-
-def enable_mc_dropout(model: torch.nn.Module):
-    """Put dropout layers in train mode while leaving the rest eval."""
-    model.eval()
-    _enable_dropout(model)
+# def _enable_dropout(module: torch.nn.Module):
+#     """Enable dropout modules in-place (used for MC-dropout)."""
+#     if isinstance(module, (torch.nn.Dropout, torch.nn.AlphaDropout, torch.nn.FeatureAlphaDropout)):
+#         module.train()
+#     for child in module.children():
+#         _enable_dropout(child)
+# 
+# def enable_mc_dropout(model: torch.nn.Module):
+#     """Put dropout layers in train mode while leaving the rest eval."""
+#     model.eval()
+#     _enable_dropout(model)
 
 def evaluate():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    transformers.set_seed(training_args.seed)
 
     config = transformers.AutoConfig.from_pretrained(
         model_args.checkpoint,
@@ -59,8 +61,8 @@ def evaluate():
         task = data_args.data_path.split("/")[-1]
         task_dataset = load_NT_tasks(task=task, split="test", encode_labels=False)
     else:
-        task_dataset = load_local_dataset(path=data_args.data_path, encode_labels=False)
-
+        #task_dataset = load_local_dataset(path=data_args.data_path, encode_labels=False)
+        task_dataset = load_local_dataset(path=data_args.data_path, encode_labels=False, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
     if False:
         label2id = {k: int(v) for k, v in config.label2id.items()}
@@ -69,9 +71,10 @@ def evaluate():
             batched=True,
         )
 
-    num_labels = data_args.num_labels if data_args.num_labels is not None else task_dataset.features["label"].num_classes
-    num_labels = config.num_labels if hasattr(config, "num_labels") else num_labels
+    #num_labels = data_args.num_labels if data_args.num_labels is not None else task_dataset.features["label"].num_classes
+    num_labels = config.num_labels if hasattr(config, "num_labels") else data_args.num_labels
     task_dataset, data_collator = prep_for_trainer(task_dataset, tokenizer)
+    print(len(task_dataset))
     
     # buiild model 
     model = transformers.AutoModelForSequenceClassification.from_pretrained(
@@ -82,13 +85,17 @@ def evaluate():
     )
 
     if model_args.uncertainty_method == "epinet":
-        epi_cfg = EpinetConfig(num_classes=num_labels)
-        wrapper = EpinetWrapper(model, hyenaDNA_feature_fn, epi_cfg, epinet=MLPEpinetWithPrior)
+        #epi_cfg = EpinetConfig(num_classes=num_labels)
+        epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True, vocab_size=config.vocab_size)
+        wrapper = EpinetWrapper(model, hyenaDNA_feature_fn, epi_cfg, epinet=MLPEpinetWithConvPrior)
         model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=8).to(DEVICE)
         with torch.no_grad():
-            dummy = tokenizer("ACGT", truncation=True, padding="max_length", max_length=8, return_tensors="pt")
+            dummy = tokenizer("ACGT", truncation=True, padding="max_length", max_length=training_args.model_max_length, return_tensors="pt")
             dummy = {k: v.to(DEVICE) for k, v in dummy.items()}
             _ = model(**dummy)  # builds epinet internals
+        sd = torch.load(os.path.join(model_args.epinet_path, "pytorch_model.bin"), map_location="cpu")
+        model.load_state_dict(sd, strict=True)
+        model.to(DEVICE).eval()
     elif model_args.uncertainty_method == "mc_dropout":
         enable_mc_dropout(model)
         model.to(DEVICE)
@@ -114,6 +121,7 @@ def evaluate():
         batch_size=training_args.per_device_eval_batch_size,
         uncertainty_method=model_args.uncertainty_method,
         outfile=outfile,
+        temperature=model_args.temperature,
     )
 
 

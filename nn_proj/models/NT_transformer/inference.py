@@ -30,6 +30,7 @@ def enable_mc_dropout(model: nn.Module, p: float = 0.1) -> None:
 def evaluate():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    transformers.set_seed(training_args.seed)
 
     config = transformers.AutoConfig.from_pretrained(
         model_args.checkpoint,
@@ -57,7 +58,8 @@ def evaluate():
         task = data_args.data_path.split("/")[-1]
         task_dataset = load_NT_tasks(task=task, split="test", encode_labels=False)
     else:
-        task_dataset = load_local_dataset(path=data_args.data_path, encode_labels=False)
+        #task_dataset = load_local_dataset(path=data_args.data_path, encode_labels=False)
+        task_dataset= load_local_dataset(path=data_args.data_path, encode_labels=False, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
     if False:
         label2id = {k: int(v) for k, v in config.label2id.items()}
@@ -114,6 +116,7 @@ def evaluate():
         batch_size=training_args.per_device_eval_batch_size,
         uncertainty_method=model_args.uncertainty_method,
         outfile=outfile,
+        temperature=model_args.temperature,
     )
 
 

@@ -5,6 +5,7 @@ import json
 import os
 from torch.utils.data import Dataset
 from safetensors.torch import load_file
+from transformers import set_seed
 
 from nn_proj.common.datasets import load_local_dataset, load_NT_tasks, prep_for_trainer
 from nn_proj.common.utils import preprocess_logits_for_metrics, compute_metrics
@@ -18,6 +19,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    set_seed(training_args.seed)
     
     config = transformers.AutoConfig.from_pretrained(
         model_args.checkpoint,
@@ -46,7 +48,7 @@ def train():
         task = data_args.data_path.split("/")[-1]
         train_dataset = load_NT_tasks(task=task, split="train")
     else:
-        train_dataset = load_local_dataset(path=data_args.data_path)
+        train_dataset = load_local_dataset(path=data_args.data_path, encode_labels=True, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
     # data split
     split = train_dataset.train_test_split(test_size=0.1, seed=training_args.seed, stratify_by_column="labels")
@@ -55,7 +57,8 @@ def train():
     train_dataset, data_collator = prep_for_trainer(train_dataset, tokenizer)
     val_dataset, _   = prep_for_trainer(val_dataset, tokenizer)
 
-    num_labels = data_args.num_labels if data_args.num_labels is not None else train_dataset.features["labels"].num_classes
+    #num_labels = data_args.num_labels if data_args.num_labels is not None else train_dataset.features["labels"].num_classes
+    num_labels = config.num_labels if hasattr(config, "num_labels") else num_labels
 
     # load model and attatch epinet
     model = transformers.AutoModelForSequenceClassification.from_pretrained(

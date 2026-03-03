@@ -369,6 +369,7 @@ def predict(
     outfile: Optional[str] = "val_uncertainty.csv",
     use_amp: bool = False,
     uncertainty_method: str = None,
+    temperature: float = 1.0,
 ) -> List[Dict[str, Any]]:
     """
     One base forward + K epinet head forwards per batch (return_all=True),
@@ -376,6 +377,7 @@ def predict(
     """
     # handle metadata columns first
     dataset = dataset.remove_columns(["sequence"])
+    print(len(dataset))
 
     input_label_keys = {"input_ids", "attention_mask", "labels", "label"}
     metadata_cols = [
@@ -383,10 +385,10 @@ def predict(
         if c not in input_label_keys
     ]
 
-    metas = [
-        {col: dataset[col][i] for col in metadata_cols}
-        for i in range(len(dataset))
-    ]
+    # metas = [
+    #     {col: dataset[col][i] for col in metadata_cols}
+    #     for i in range(len(dataset))
+    # ]
 
     dataset = dataset.remove_columns(metadata_cols)
 
@@ -425,6 +427,9 @@ def predict(
             logits_all = out.logits.unsqueeze(0)  #
         
         logits_all = logits_all.detach().cpu()
+        if temperature is not None and float(temperature) != 1.0:
+            t = float(temperature)
+            logits_all = logits_all / t
 
         #logits_all = model.wrapper(inputs, n_index_samples=k_samples, return_all=True)
         unc = compute_uncertainty(logits_all)           
@@ -445,11 +450,11 @@ def predict(
                 "vote_pct": float(unc["vote_percentage"][i]),
             })
 
-            if True:
+            if False:
                 for c in range(C):
                     row[f"prob_{c}"] = float(mean_probs[i, c])
 
-            rows.append({**row, **metas[idx]})
+            rows.append({**row})# , **metas[idx]})
             idx += 1
 
 

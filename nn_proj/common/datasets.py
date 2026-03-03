@@ -2,6 +2,8 @@
 # Utilities to load NT tasks or local datasets, tokenize, and build a DNABERT-friendly collator.
 
 import os
+import pandas as pd
+
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, Iterable
 
@@ -12,6 +14,12 @@ import torch
 
 
 
+# taxID rank labeling function:
+def taxid_rank_labeling(taxid: int, rank: str, lineage_df: pd.DataFrame) -> int:
+    species_to_target = dict(zip(lineage_df["species"].astype("Int64"), lineage_df[rank].astype("Int64")))
+    
+    return species_to_target.get(taxid, -1)
+    
 
 """
 Functions to load datasets for local or huggingface tasks.
@@ -51,7 +59,7 @@ def load_NT_tasks(task: str, split: str, encode_labels: bool = True) -> Dataset:
 
 
 # Local single-file datasets (csv/tsv/json/jsonl/parquet)
-def load_local_dataset(path: str, encode_labels: bool = True) -> Dataset:
+def load_local_dataset(path: str, encode_labels: bool = True, rank=None, taxa_df=None) -> Dataset:
     """
     Load a single local file (CSV/TSV/JSON/JSONL/Parquet) as a Dataset (single split named 'train').
     Expects columns: 'sequence', 'label' or 'labels'.
@@ -80,6 +88,19 @@ def load_local_dataset(path: str, encode_labels: bool = True) -> Dataset:
             ds = ds.rename_column("label", "labels")
         else:
             raise ValueError(f"Expected a 'label'/'labels' column in {path}, found: {sorted(cols)}")
+        
+    if rank in ["species", "genus", "family", "order", "class", "phylum", "kingdom"]:
+        if "taxid" not in cols:
+            raise ValueError(f"taxa_rank labeling requested but no 'taxid' column found in {path}")
+        
+        lineage_df = pd.read_csv(taxa_df, index_col=0)
+
+        species_to_target = dict(zip(lineage_df["species"].astype("Int64"),
+                                     lineage_df[rank].astype("Int64")))
+        ds = ds.map(lambda ex: {"labels": int(species_to_target.get(ex["taxid"], -1))})
+
+        #ds = ds.map(lambda ex: {"target": species_to_target.get((ex["taxid"]), -1)},
+        #            remove_columns=["taxid"])
 
     if encode_labels and not isinstance(ds.features["labels"], ClassLabel):
         ds = ds.class_encode_column("labels")

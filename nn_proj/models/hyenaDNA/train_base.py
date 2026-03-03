@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 import transformers
 import numpy as np
+from transformers import set_seed
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 import torch.nn as nn
@@ -55,6 +56,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    set_seed(training_args.seed)
 
     # load tokenizer
     tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -76,12 +78,18 @@ def train():
         task = data_args.data_path.split("/")[-1]
         train_dataset = load_NT_tasks(task=task, split="train")
     else:
-        train_dataset = load_local_dataset(path=data_args.data_path)
+        train_dataset = load_local_dataset(path=data_args.data_path, encode_labels=True, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
+
+    print(len(train_dataset), "training examples loaded.")
+    train_dataset.filter(lambda ex: ex["labels"] != -1)  # remove unlabelled examples
+    print(len(train_dataset), "training examples after filtering unlabelled.")
+
+    print("number of classes:", train_dataset.features["labels"].num_classes)
 
     # sklearn data split
-    split = train_dataset.train_test_split(test_size=0.1, seed=training_args.seed, stratify_by_column="labels")
+    split = train_dataset.train_test_split(test_size=0.1, seed=training_args.data_seed, stratify_by_column="labels")
     train_dataset, val_dataset = split["train"], split["test"]
-    
+
     train_dataset, data_collator = prep_for_trainer(train_dataset, tokenizer, metadata_cols=("taxid", "split"),)
     val_dataset, _   = prep_for_trainer(val_dataset, tokenizer, metadata_cols=("taxid", "split"))
 
@@ -94,6 +102,7 @@ def train():
         num_labels = label_feature.num_classes
     else:
         raise ValueError("Expected ClassLabel for 'label' feature")
+    
 
     # load model
     model = transformers.AutoModelForSequenceClassification.from_pretrained(

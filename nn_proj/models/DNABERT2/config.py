@@ -16,11 +16,14 @@ class ModelArguments:
     epinet_path: Optional[str] = field(default=None, metadata={"help": "Path to epinet model."})
     num_samples: int = field(default=1, metadata={"help": "Number of samples for MC dropout or epinet."})
     uncertainty_method: str = field(default=None, metadata={"help": "Uncertainty method to use: epinet or mc_dropout."})
+    temperature: float = field(default=1.0, metadata={"help": "Temperature scaling parameter."})
 
 @dataclass
 class DataArguments:
     data_path: str
     num_labels: Optional[int] = field(default=None, metadata={"help": "Number of labels for classification."})
+    taxa_rank: Optional[str] = field(default=None, metadata={"help": "Taxonomic rank for labeling (e.g., 'genus', 'family')."})
+    taxa_df: Optional[str] = field(default=None, metadata={"help": "Path to taxa lineage dataframe CSV file."})
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
