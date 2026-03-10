@@ -15,3 +15,5 @@
 /trained_models_42/
 /inference_results_42/
 temp_scaling_factors_*.tsv
+/scripts/old
+/scripts/full_experiments

@@ -70,7 +70,7 @@ def evaluate():
             batched=True,
         )
 
-    num_labels = data_args.num_labels if data_args.num_labels is not None else task_dataset.features["label"].num_classes
+    num_labels = data_args.num_labels if data_args.num_labels is not None else task_dataset.features["labels"].num_classes
     task_dataset, data_collator = prep_for_trainer(task_dataset, tokenizer)
 
     num_labels = config.num_labels if hasattr(config, "num_labels") else data_args.num_labels
