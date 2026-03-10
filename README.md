@@ -165,4 +165,6 @@ bash test_model.sh
 - Train Epinet second using the saved base checkpoint.
 - Fit temperature scaling after base training.
 - Run all scripts from the `scripts/` directory.
+- This project has only been tested with Python 3.11 and Nvidia a100 GPUs. Your configuration may vary.
+
 
