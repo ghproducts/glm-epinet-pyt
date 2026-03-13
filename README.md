@@ -1,10 +1,7 @@
 # glm-epinet-pyt
 
-<<<<<<< HEAD
-PyTorch framework for uncertainty-aware genomic sequence classification with genomic language models (GLMs), and is primarily designed to work with huggingface models and datasets. This framework for epinet can also be reused for other projects if needed.
 =======
 PyTorch framework for uncertainty-aware genomic sequence classification with genomic language models (GLMs). This framework for epinet can also be reused for other projects.
->>>>>>> afba204 (cleaned up old scripts)
 
 This project supports:
 
@@ -27,19 +24,6 @@ Supported uncertainty methods:
 - `mc_dropout`: monte-carlo dropout on all dropout layers.
 - `epinet`: custom epinet implementation of epistemic neural network
 
-## Repository layout
-
-```text
-.
-├── nn_proj/
-│   ├── common/
-│   └── models/
-│       ├── CARMANIA/
-│       ├── DNABERT2/
-│       ├── NT_transformer/
-│       ├── hyenaDNA/
-│       └── epinet/
-└── scripts/
 ```
 
 Main folders:
@@ -170,5 +154,6 @@ bash test_model.sh
 - Fit temperature scaling after base training.
 - Run all scripts from the `scripts/` directory.
 - This project has only been tested with Python 3.11 and Nvidia a100 GPUs. Your configuration may vary.
+
 
 
