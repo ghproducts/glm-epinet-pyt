@@ -1,6 +1,10 @@
 # glm-epinet-pyt
 
+<<<<<<< HEAD
 PyTorch framework for uncertainty-aware genomic sequence classification with genomic language models (GLMs), and is primarily designed to work with huggingface models and datasets. This framework for epinet can also be reused for other projects if needed.
+=======
+PyTorch framework for uncertainty-aware genomic sequence classification with genomic language models (GLMs). This framework for epinet can also be reused for other projects.
+>>>>>>> afba204 (cleaned up old scripts)
 
 This project supports:
 
