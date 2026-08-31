@@ -1,0 +1,266 @@
+# Complete specification of every train/test pair in the study.
+#
+# This file is the single source of truth for which evaluations exist, what
+# each one predicts, and how its distribution-shift category was assigned.
+# `nn_proj/analysis/tasks.py` loads it; the experiment driver and every figure
+# script read the grid from here rather than from hard-coded lists.
+#
+# ---------------------------------------------------------------------------
+# Shift-category criterion
+# ---------------------------------------------------------------------------
+# Categories are assigned by *which biological unit is held out of training*,
+# not by thresholding a sequence-similarity statistic. The rule is:
+#
+#   ID        Test data is drawn from the same distribution as training: a
+#             held-out split of the same corpus, same task, same label space.
+#
+#   Near-ID   The prediction target and its label space are unchanged, but a
+#             biological unit strictly *below* the label rank is held out.
+#             Every test label was seen in training; the specific organisms or
+#             sequences carrying it were not.
+#
+#   Near-OOD  The prediction target is unchanged, but the labelled unit itself
+#             is novel. Test labels lie outside the training label space, so
+#             error is 1.0 by construction.
+#
+#   OOD       The test data comes from outside the trained domain entirely
+#             (non-bacterial sequence for a bacterial classifier), or the
+#             variable that defines the target is held out (unseen gene
+#             classes for a gene classifier).
+#
+# BLAST alignment statistics (`scripts/run_blast_table.sh`) are reported as
+# *descriptive evidence* about how much residual sequence similarity survives
+# each holdout. They are not the assignment rule, and they are not monotone in
+# the category ordering — near-OOD sequences can retain high local similarity
+# to training data through conserved regions. Treating similarity as the
+# criterion would conflate "distant in sequence space" with "novel with
+# respect to the label", which are different things.
+#
+# ---------------------------------------------------------------------------
+# Which metrics each pair supports
+# ---------------------------------------------------------------------------
+# `supports` records what a pair can legitimately measure.
+#
+#   calibration  Error rate and ECE are interpretable: the test labels live in
+#                the training label space and the prediction target is the
+#                same, so "confidence that the predicted class is correct" is
+#                a well-posed quantity.
+#
+#   novelty      The pair can serve as ID/OOD inputs for AUROC. This only
+#                requires that the inputs come from different distributions;
+#                it does not require compatible labels.
+#
+# Pairs marked `target_shift: true` change the prediction problem, not just
+# the input distribution (e.g. a promoter model evaluated against enhancer
+# labels). For those, `calibration` is deliberately absent: a confidence
+# score cannot be checked against a label the model was never asked to
+# predict. They remain valid `novelty` inputs, which is how they are used.
+
+datasets:
+
+  # =======================================================================
+  # Regulatory sequence classification
+  # Source: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised
+  # =======================================================================
+
+  - train: enhancers_types
+    target: enhancer type (3-way)
+    label_space: [0, 1, 2]
+    tests:
+      - test: enhancers_types
+        category: ID
+        target_shift: false
+        held_out: held-out split of the same task
+        supports: [calibration, novelty]
+      - test: splice_sites_all
+        category: OOD
+        target_shift: true
+        target: splice-site type
+        held_out: prediction target replaced; splice-site sequence, enhancer label space
+        supports: [novelty]
+        note: >
+          Enhancer-type model evaluated against splice-site data. The
+          sequence-function relationship differs, so error and ECE are not
+          interpretable and are not reported. Used as far-OOD inputs only.
+
+  - train: promoter_all
+    target: promoter presence (binary)
+    label_space: [0, 1]
+    tests:
+      - test: promoter_all
+        category: ID
+        target_shift: false
+        held_out: held-out split of the same task
+        supports: [calibration, novelty]
+      - test: enhancers
+        category: Near-OOD
+        target_shift: true
+        target: enhancer presence (binary)
+        held_out: prediction target replaced; both are binary cis-regulatory element detection
+        supports: [novelty]
+        note: >
+          Both tasks are binary presence/absence of a cis-regulatory element,
+          so the label spaces coincide numerically, but the element being
+          detected differs. Treated as a target shift.
+
+  - train: splice_sites_acceptors
+    target: splice acceptor site (binary)
+    label_space: [0, 1]
+    tests:
+      - test: splice_sites_acceptors
+        category: ID
+        target_shift: false
+        held_out: held-out split of the same task
+        supports: [calibration, novelty]
+      - test: splice_sites_donors
+        category: Near-ID
+        target_shift: true
+        target: splice donor site (binary)
+        held_out: acceptor motif replaced by donor motif; same splicing machinery
+        supports: [novelty]
+        note: >
+          The mildest of the regulatory shifts: donor and acceptor sites are
+          binary detection problems over the same biological process.
+
+  # =======================================================================
+  # Metagenomic gene classification
+  # Source: MsAlEhR/scorpio-gene-taxa
+  # =======================================================================
+
+  - train: gene_taxa
+    target: gene class
+    label_space: gene classes present in training
+    tests:
+      - test: test
+        category: ID
+        target_shift: false
+        held_out: nothing; same-distribution held-out split
+        supports: [calibration, novelty]
+      - test: taxa_out
+        category: Near-ID
+        target_shift: false
+        held_out: taxa absent from training, gene classes unchanged
+        supports: [calibration, novelty]
+      - test: gene_out
+        category: OOD
+        target_shift: false
+        held_out: gene classes absent from training
+        supports: [novelty]
+        note: >
+          Held-out gene classes are outside the training label space, so error
+          is 1.0 by construction and ECE is not interpretable. Novelty
+          detection only.
+
+  # =======================================================================
+  # Simulated long-read taxonomic classification (PBSim3 over RefSeq)
+  # Ranks are separate trained models over the same reads.
+  # =======================================================================
+
+  - train: pbsim
+    ranks: [family, order, class, phylum]
+    target: bacterial taxon at the trained rank
+    label_space: taxa at the trained rank present in training
+    tests:
+      - test: id_novel_genus
+        category: Near-ID
+        target_shift: false
+        held_out: genera absent from training, within families that are present
+        supports: [calibration, novelty]
+        note: >
+          Every test label was seen in training; the genera carrying it were
+          not. This is the ID anchor for the taxonomic OOD-detection pairs.
+          It is *not* an ID condition in the strict sense and is labelled
+          Near-ID throughout.
+      - test: ood_novel_family
+        category: Near-OOD
+        target_shift: false
+        held_out: families absent from training
+        supports: [novelty]
+        note: >
+          At family rank the test labels are outside the training label space,
+          so error is 1.0 by construction. At higher ranks the parent taxon
+          may be present; error is reported but should be read alongside the
+          label-space overlap column emitted by the aggregation script.
+      - test: ood_nonbacterial
+        category: OOD
+        target_shift: false
+        held_out: entire domain; non-bacterial sequence
+        supports: [novelty]
+        note: >
+          Non-bacterial reads have no valid label in a bacterial taxonomy, so
+          error is 1.0 by construction. Novelty detection only.
+
+# ---------------------------------------------------------------------------
+# OOD-detection pairings
+# ---------------------------------------------------------------------------
+# Each entry names the ID anchor used as the negative class when computing
+# AUROC for a given training task. Every other test set for that task is
+# scored against this anchor as the positive class.
+ood_anchors:
+  enhancers_types: enhancers_types
+  promoter_all: promoter_all
+  splice_sites_acceptors: splice_sites_acceptors
+  gene_taxa: test
+  pbsim: id_novel_genus
+
+# ---------------------------------------------------------------------------
+# Uncertainty methods
+# ---------------------------------------------------------------------------
+methods:
+  base:
+    label: Base
+    description: Deterministic softmax of the fine-tuned backbone.
+    k_samples: 1
+  base_scaled:
+    label: Temp Scaling
+    description: >
+      Softmax after dividing logits by a temperature fitted on the
+      task's own validation split by minimising NLL.
+    k_samples: 1
+  mc_dropout:
+    label: MC Dropout
+    description: Dropout active at inference, averaged over K stochastic passes.
+    k_samples: 10
+  conv_epinet:
+    label: Epinet
+    description: >
+      Epinet head with MLP and fixed 1D-convolutional priors, averaged over K
+      epistemic index samples.
+    k_samples: 10
+
+# Uncertainty scores extracted from each method's prediction stack.
+scores:
+  - max_confidence
+  - U_total
+  - U_aleatoric
+  - U_epistemic
+
+# ---------------------------------------------------------------------------
+# Canonical evaluation grid
+# ---------------------------------------------------------------------------
+# The backbone/method/seed combinations that make up the reported results.
+# `ResultsIndex` filters to these by default, so exploratory or superseded
+# runs sitting in the same tree (earlier epinet variants, ablation sweeps,
+# renamed directories) cannot leak into a reported number.
+grid:
+  seeds: [1, 2, 3, 4, 42]
+  backbones: [NT_transformer, DNABERT2, hyenaDNA, CARMANIA]
+  methods: [base, base_scaled, mc_dropout, conv_epinet]
+
+# Runs present in the results tree that are deliberately excluded from the
+# reported grid, recorded so their presence is not mistaken for an omission.
+excluded_runs:
+  - name: epinet
+    reason: >
+      Earlier epinet variant with the MLP prior only and no convolutional
+      prior. Complete for NT_transformer and DNABERT2 under seed 42 alone, so
+      it cannot support a seeded comparison. Retained as a partial prior
+      ablation; see docs/REPRODUCE.md.
+  - name: hyena_ablation
+    reason: >
+      Per-epoch epinet checkpoints for HyenaDNA, used to check that epinet
+      behaviour is stable across training length. Single seed.
+  - name: hyenaDNA_old
+    reason: Superseded HyenaDNA runs from before the tokenizer fix.
+  - name: OLD
+    reason: Superseded directory layout retained for provenance.
