@@ -1,0 +1,136 @@
+# The full experimental grid.
+#
+# `scripts/run_grid.py` reads this file and emits (or runs) every command
+# needed to reproduce the study: base fine-tuning, epinet training, temperature
+# fitting, and inference over every test set. It replaces the four
+# hand-edited shell templates in `scripts/`, which encoded a single cell of the
+# grid at a time and had to be edited between runs.
+#
+# The shell templates are still there and still work for one-off runs. This
+# file is what makes the *set* of runs reproducible.
+
+# ---------------------------------------------------------------------------
+# Backbones
+# ---------------------------------------------------------------------------
+# `tokens_per_base` converts a task's sequence length in nucleotides into the
+# model_max_length to pass. It reflects each tokenizer's compression:
+#   NT v2      6-mer tokens          -> 1/6 of sequence length
+#   DNABERT-2  byte-pair encoding    -> ~1/4 of sequence length (empirical)
+#   HyenaDNA   single character      -> 1 token per base
+#   CARMANIA   single character      -> 1 token per base
+backbones:
+  NT_transformer:
+    model_name_or_path: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
+    tokens_per_base: 0.1667
+    feature_fn: NT_feature_fn
+  DNABERT2:
+    model_name_or_path: zhihan1996/DNABERT-2-117M
+    tokens_per_base: 0.25
+    feature_fn: NT_feature_fn
+  hyenaDNA:
+    model_name_or_path: LongSafari/hyenadna-small-32k-seqlen-hf
+    tokens_per_base: 1.0
+    feature_fn: hyenaDNA_feature_fn
+  CARMANIA:
+    model_name_or_path: MsAlEhR/carmania-160k-seqlen-human
+    tokens_per_base: 1.0
+    feature_fn: NT_feature_fn
+
+# ---------------------------------------------------------------------------
+# Training tasks
+# ---------------------------------------------------------------------------
+# `seq_length` is the raw nucleotide length of the task's sequences, used with
+# tokens_per_base above. `data_path` is either an InstaDeep task identifier or
+# a local CSV produced by data_gen/.
+#
+# Test sets name the directory each inference run writes into; those names are
+# the ones registered in configs/tasks.yaml.
+training_tasks:
+
+  promoter_all:
+    data_path: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/promoter_all
+    seq_length: 300
+    num_labels: 2
+    tests:
+      promoter_all: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/promoter_all
+      enhancers: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/enhancers
+
+  enhancers_types:
+    data_path: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/enhancers_types
+    seq_length: 200
+    num_labels: 3
+    tests:
+      enhancers_types: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/enhancers_types
+      splice_sites_all: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/splice_sites_all
+
+  splice_sites_acceptors:
+    data_path: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/splice_sites_acceptors
+    seq_length: 600
+    num_labels: 2
+    tests:
+      splice_sites_acceptors: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/splice_sites_acceptors
+      splice_sites_donors: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/splice_sites_donors
+
+  gene_taxa:
+    data_path: data/scorpio_gene_taxa/train.csv
+    seq_length: 400
+    num_labels: 437
+    tests:
+      test: data/scorpio_gene_taxa/test.csv
+      taxa_out: data/scorpio_gene_taxa/taxa_out.csv
+      gene_out: data/scorpio_gene_taxa/gene_out.csv
+
+  # One trained model per taxonomic rank over the same simulated reads. The
+  # rank is passed through --taxa_rank, which remaps the family-level label in
+  # the CSV up to the requested rank via the lineage table.
+  pbsim:
+    data_path: data_gen/pbsim/csv_data/reads_train.csv
+    seq_length: 6000
+    taxa_df: data_gen/pbsim/full_basic_lineage.csv
+    ranks: [family, order, class, phylum]
+    tests:
+      id_novel_genus: data_gen/pbsim/csv_data/reads_id_novel_genus.csv
+      ood_novel_family: data_gen/pbsim/csv_data/reads_ood_novel_family.csv
+      ood_nonbacterial: data_gen/pbsim/csv_data/reads_ood_nonbacterial.csv
+
+# ---------------------------------------------------------------------------
+# Hyperparameters
+# ---------------------------------------------------------------------------
+# Identical across backbones and tasks, as reported.
+training:
+  learning_rate: 2.0e-5
+  num_train_epochs: 2
+  per_device_train_batch_size: 32
+  per_device_eval_batch_size: 16
+  gradient_accumulation_steps: 1
+  warmup_steps: 50
+  weight_decay: 0.01
+  fp16: true
+  val_fraction: 0.1        # 90/10 train/validation split
+
+epinet:
+  # Trained on the same data with the base model frozen.
+  num_train_epochs: 2
+  learning_rate: 2.0e-5
+  index_dim: 30
+  hidden_sizes: [50]
+  prior_scale: 1.0
+  conv_prior_scale: 1.0
+  k_train: 8
+
+inference:
+  per_device_eval_batch_size: 32
+  # Index samples for the stochastic methods. The convolutional prior basis is
+  # now computed once per batch rather than once per sample, so raising this
+  # costs far less than it did; see docs/REPRODUCE.md.
+  k_samples: 10
+
+seeds: [1, 2, 3, 4, 42]
+
+# Where checkpoints and predictions go. {seed}, {backbone}, {task}, {method}
+# and {test} are substituted.
+paths:
+  base_checkpoint: "checkpoints/seed_{seed}/{backbone}/{task}/base"
+  epinet_checkpoint: "checkpoints/seed_{seed}/{backbone}/{task}/epinet"
+  temperatures: "checkpoints/temperatures.json"
+  predictions: "results/inference_results_{seed}/{backbone}/{method}/{task}/{test}"

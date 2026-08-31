@@ -17,3 +17,24 @@
 temp_scaling_factors_*.tsv
 /scripts/old/
 /scripts/full_experiments
+
+# --- added with the analysis and dataset-generation code ---
+# Manuscript PDF and the reviewer correspondence. Not source, and the
+# review email contains personal addresses.
+/.docs/
+# Stop new bytecode being committed. The .pyc files already tracked on main
+# are unaffected; remove them separately if you want them gone.
+__pycache__/
+*.py[cod]
+# Outputs of nn_proj.analysis; regenerate with aggregate.py / figures.py
+/tables/
+/plots/
+/results/
+/blast_eval/
+# Generated datasets; regenerate with data_gen/. The species splits are tracked.
+/data_gen/pbsim/csv_data/
+/data_gen/pbsim/pbsim_raw/
+/data_gen/pbsim/sequences/
+# Backups written by nn_proj.analysis.repair --write
+*.csv.corrupt
+.pytest_cache/
