@@ -35,6 +35,18 @@ __pycache__/
 /data_gen/pbsim/csv_data/
 /data_gen/pbsim/pbsim_raw/
 /data_gen/pbsim/sequences/
+# Generated datasets; regenerate with data_gen/promoter_motifs/. The split
+# manifest (splits/motif_splits.csv) is tracked; the raw/annotated corpus and
+# the sequence-bearing model-ready CSVs are not.
+/data_gen/promoter_motifs/csv_data/
+/data_gen/promoter_motifs/genomic_benchmarks/
+/data_gen/promoter_motifs/motifs/
+/data_gen/promoter_motifs/fimo_out/
+/data_gen/promoter_motifs/promoters_all.csv
+/data_gen/promoter_motifs/promoters_annotated.csv
+/data_gen/promoter_motifs/promoters_all.fa
+/data_gen/promoter_motifs/promoters_positive_train.fa
+/data_gen/promoter_motifs/promoters_negative_train.fa
 # Backups written by nn_proj.analysis.repair --write
 *.csv.corrupt
 .pytest_cache/

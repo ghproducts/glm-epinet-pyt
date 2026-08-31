@@ -80,6 +80,17 @@ training_tasks:
       taxa_out: data/scorpio_gene_taxa/taxa_out.csv
       gene_out: data/scorpio_gene_taxa/gene_out.csv
 
+  # Same task and label space as `train` on every test set -- only which
+  # motif combinations appear differs. See data_gen/promoter_motifs/README.md.
+  promoter_motifs:
+    data_path: data_gen/promoter_motifs/csv_data/train.csv
+    seq_length: 251
+    num_labels: 2
+    tests:
+      test_ID: data_gen/promoter_motifs/csv_data/test_ID.csv
+      test_matched_ID: data_gen/promoter_motifs/csv_data/test_matched_ID.csv
+      test_OOD: data_gen/promoter_motifs/csv_data/test_OOD.csv
+
   # One trained model per taxonomic rank over the same simulated reads. The
   # rank is passed through --taxa_rank, which remaps the family-level label in
   # the CSV up to the requested rank via the lineage table.

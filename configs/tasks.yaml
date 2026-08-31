@@ -123,6 +123,57 @@ datasets:
           binary detection problems over the same biological process.
 
   # =======================================================================
+  # Promoter motif composition
+  # Source: data_gen/promoter_motifs/ (human_nontata_promoters, annotated
+  # against 6 JASPAR motifs). Unlike every pair above, train and every test
+  # set here share the same task and label space throughout -- only which
+  # transcription-factor motif *combinations* appear differs. See
+  # data_gen/promoter_motifs/README.md.
+  # =======================================================================
+
+  - train: promoter_motifs
+    target: promoter presence (binary)
+    label_space: [0, 1]
+    tests:
+      - test: test_ID
+        category: ID
+        target_shift: false
+        held_out: held-out split of the same task
+        supports: [calibration, novelty]
+      - test: test_matched_ID
+        category: ID
+        target_shift: false
+        held_out: >
+          nothing; resampled from test_ID to match test_OOD's per-label
+          motif-*count* distribution. Not a shift condition -- a matched
+          control for isolating "novel combination" from "more motifs than
+          usual" as separate effects (see FINDINGS-style item in
+          .docs/REVISION_PLAN.md, Reviewer 1 point 3 / Reviewer 2 point 3).
+        supports: [calibration, novelty]
+        note: >
+          Only 122 of these 1,569 rows are unique sequences (up to 25x
+          repetition); see data_gen/promoter_motifs/README.md, Verification.
+          Treat downstream statistics on this set as ~122 independent
+          observations, not 1,569.
+      - test: test_OOD
+        category: Near-ID
+        target_shift: false
+        held_out: >
+          four transcription-factor motif combinations (EGR1+SP2,
+          SP2+TFDP1, SP2+ZNF131, ZBED4+ZNF131) absent from training; every
+          test label (promoter/non-promoter) was seen in training, the
+          specific motif combinations carrying it were not
+        supports: [calibration, novelty]
+        note: >
+          Named "OOD" in the source project and in its filename, but under
+          this registry's held-out-variable rule it is Near-ID, not OOD: the
+          target and label space are unchanged, and only a unit below the
+          label rank (the motif combination) is novel -- directly analogous
+          to pbsim's id_novel_genus. Kept as a worked example of applying the
+          category rule even when it contradicts an inherited name; see
+          Reviewer 1 point 1 in .docs/REVISION_PLAN.md.
+
+  # =======================================================================
   # Metagenomic gene classification
   # Source: MsAlEhR/scorpio-gene-taxa
   # =======================================================================
@@ -202,6 +253,7 @@ ood_anchors:
   splice_sites_acceptors: splice_sites_acceptors
   gene_taxa: test
   pbsim: id_novel_genus
+  promoter_motifs: test_ID
 
 # ---------------------------------------------------------------------------
 # Uncertainty methods
