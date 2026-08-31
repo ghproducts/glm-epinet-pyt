@@ -6,17 +6,7 @@ A regulatory-sequence distribution-shift benchmark built from
 transcription-factor (TF) motif *combinations* a sequence carries. Train and
 every test set share the same binary promoter/non-promoter task and the same
 label space — unlike the cross-task regulatory pairs in
-`configs/tasks.yaml` (`promoter_all -> enhancers`, etc.), this is a genuine
-same-target shift.
-
-Ported from a Drexel DSCI 691 course project
-(`.docs/DSCI-691-Project/`, not tracked in this repository) by this
-manuscript's corresponding author, generalized here to run from committed,
-documented steps instead of a personal-path notebook. See
-`docs/REVISION_PLAN.md` in `.docs/` for why this dataset was pulled in
-(it targets Reviewer 2's point 1 — task-mismatched OOD evals aren't real
-distribution shift — and Reviewer 1's point 3 — the near/far-OOD hypothesis
-was asserted, never tested).
+`configs/tasks.yaml` (`promoter_all -> enhancers`, etc.)
 
 ## Pipeline
 
@@ -32,13 +22,6 @@ are deterministic Python, committed here.
 4. make_splits.py          assign train/ID/matched-ID/OOD        (deterministic, verified)
 5. build_csvs.py           manifest + corpus -> model-ready CSVs (deterministic)
 ```
-
-Stage 4's output (`splits/motif_splits.csv`) is committed — it is the exact
-split behind the released `.docs/DSCI-691-Project/results/baseline_results.csv`
-numbers, re-derived here from those released CSVs rather than from a fresh
-rerun (see **Regenerating vs. using the release**, below). Stage 5's output
-(`csv_data/`) is not committed, the same way `data_gen/pbsim/csv_data/` isn't:
-regenerate it from the manifest with `build_csvs.py`.
 
 ### 1. Download the corpus
 
@@ -215,14 +198,3 @@ the released split rather than a bug to fail on:
 > still correlated within each repeated sequence's copies. Fixing this
 > properly (widening the matching criterion, or accepting a smaller matched
 > set) is scoped as follow-up work, not done here — see `.docs/REVISION_PLAN.md`.
-
-## Known limitations carried over from the source project
-
-- Motif selection (the 6 JASPAR IDs) was a manual choice from the AME
-  ranking, not an automated procedure — documented above, not algorithmic.
-- `promoters_all.csv`'s `source_split` (the `human_nontata_promoters`
-  dataset's own train/test division) is unrelated to and not aligned with
-  this module's train/test_ID/test_OOD split; a sequence's `source_split`
-  value is provenance only.
-- Sequences are a fixed 251bp (the `human_nontata_promoters` sequence
-  length); no length-based confound between splits.
