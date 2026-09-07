@@ -46,13 +46,22 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ---------------------------------------------------------------------
 
 class GaussianIndexer(nn.Module):
-    """z ~ N(0, I) with shape [Dz], shared across batch."""
+    """z ~ N(0, I), drawn independently per batch element.
+
+    Returns [B, Dz]: one index sample per example, not one shared by the
+    whole batch. Previously this returned a single [Dz] vector reused for
+    every example in the batch (see git history) -- every example's epinet
+    correction for a given index sample s was then driven by the same z_s,
+    so the K "posterior draws" used to estimate one example's epistemic
+    spread were not independent of its batch-mates' draws. Fixed per
+    R1-4/#8 in .docs/RESUBMISSION_PLAN.md.
+    """
     def __init__(self, index_dim: int):
         super().__init__()
         self.index_dim = index_dim
     @torch.no_grad()
-    def forward(self, device=None, dtype=None) -> torch.Tensor:
-        return torch.randn(self.index_dim, device=device, dtype=dtype or torch.float32)
+    def forward(self, batch_size: int, device=None, dtype=None) -> torch.Tensor:
+        return torch.randn(batch_size, self.index_dim, device=device, dtype=dtype or torch.float32)
 
 
 def _mlp(in_dim: int, hidden: Iterable[int], out_dim: int) -> nn.Sequential:
@@ -83,16 +92,16 @@ class ProjectedMLP(nn.Module):
                 p.requires_grad = False                            
 
     def forward(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
-        # Expect x: [B, Din], z: [Dz]  (shared across batch)
-        if x.dim() != 2 or z.dim() != 1:
-            raise ValueError("Expected x:[B,Din], z:[Dz].")
-        if z.shape[0] != self.index_dim:
-            raise ValueError(f"z dim {z.shape[0]} != index_dim {self.index_dim}")
+        # Expect x: [B, Din], z: [B, Dz]  (one index sample per example)
+        if x.dim() != 2 or z.dim() != 2:
+            raise ValueError("Expected x:[B,Din], z:[B,Dz].")
+        if z.shape[-1] != self.index_dim:
+            raise ValueError(f"z dim {z.shape[-1]} != index_dim {self.index_dim}")
+        if z.shape[0] != x.shape[0]:
+            raise ValueError(f"batch mismatch: x has {x.shape[0]} rows, z has {z.shape[0]}")
 
         if self.concat_index:
-            B = x.shape[0]
-            z_cat = z.unsqueeze(0).expand(B, -1)   # [B, Dz]
-            h = torch.cat([z_cat, x], dim=-1)      # [B, Din+Dz]
+            h = torch.cat([z, x], dim=-1)      # [B, Din+Dz]
         else:
             h = x
 
@@ -103,7 +112,7 @@ class ProjectedMLP(nn.Module):
         out = self.core(h)                         # [B, C*Dz]
         B = x.shape[0]
         m = out.view(B, self.num_classes, self.index_dim)  # [B, C, Dz]
-        return torch.einsum('bcd,d->bc', m, z) 
+        return torch.einsum('bcd,bd->bc', m, z)
 
 
 
@@ -151,8 +160,15 @@ class FixedConv1DPriorEnsemble(nn.Module):
 
         self.dropout = nn.Dropout(cfg.fixed_conv_dropout)
 
-    def forward(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.Tensor], z: torch.Tensor) -> torch.Tensor:
-        # input_ids: [B, L], z: [Dz]
+    def basis(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.Tensor]) -> torch.Tensor:
+        """Compute every frozen sub-network's output, independent of z.
+
+        None of the Dz conv nets depend on the index sample -- only the
+        final contraction with z does (see ``contract``) -- so this can be
+        computed once per batch and reused across every index sample,
+        instead of being recomputed per sample as the old ``forward`` did.
+        Returns [B, Dz, C]. See docs/MODEL_CODE_FIXES.md item 3.1.
+        """
         B, L = input_ids.shape
         x = self.embed(input_ids)                # [B, L, E]
         if attention_mask is not None:
@@ -161,13 +177,32 @@ class FixedConv1DPriorEnsemble(nn.Module):
         x = x.transpose(1, 2).contiguous()       # [B, E, L]
         x = self.dropout(x)
 
-        out = 0.0
+        pis = []
         for i in range(self.Dz):
             h = self.nets[i]["net"](x)           # [B, ch3, L’]
             pooled = h.mean(dim=-1)              # [B, ch3]  (global average pool)
-            pi = self.nets[i]["head"](pooled)    # [B, C]
-            out = out + pi * z[i]
-        return out
+            pis.append(self.nets[i]["head"](pooled))  # [B, C]
+        return torch.stack(pis, dim=1)           # [B, Dz, C]
+
+    @staticmethod
+    def contract(basis: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+        """Contract a precomputed basis with one or many index samples, each
+        sample independent per example (see GaussianIndexer).
+
+        basis: [B, Dz, C]. z: [B, Dz] -> returns [B, C] (one index sample per
+        example); z: [S, B, Dz] -> returns [S, B, C] (S index samples, each
+        with its own per-example draw), every sample sharing the same basis
+        instead of re-running the Dz frozen conv nets per sample.
+        """
+        if z.dim() == 2:
+            return torch.einsum('bdc,bd->bc', basis, z)
+        return torch.einsum('bdc,sbd->sbc', basis, z)
+
+    def forward(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.Tensor], z: torch.Tensor) -> torch.Tensor:
+        # Single-sample convenience path; kept for any caller that wants one
+        # z at a time. EpinetWrapper's multi-sample path uses basis()/
+        # contract() directly instead, to avoid recomputing the basis.
+        return self.contract(self.basis(input_ids, attention_mask), z)
 
 
 # ---------------------------------------------------------------------
@@ -241,6 +276,42 @@ class MLPEpinetWithConvPrior(nn.Module):
         convp = self.conv_prior(input_ids, attention_mask, z)
         return train + self.cfg.prior_scale * prior + self.cfg.conv_prior_scale * convp
 
+    def forward_multi(self, hidden: torch.Tensor, inputs: Any, z: torch.Tensor) -> torch.Tensor:
+        """Like ``forward``, but for many index samples at once: z is
+        [S, B, Dz] (S index samples, each independently drawn per example --
+        see GaussianIndexer) and every one of the Dz frozen conv nets in
+        ``conv_prior`` is evaluated exactly once per batch, not once per
+        sample. Returns [S, B, C].
+
+        Numerically identical to calling ``forward`` once per row of z and
+        stacking (max abs. difference ~9.5e-7 at K=100, i.e. float32
+        rounding), and ~35x faster at K=50 -- 460ms/batch down to 13ms --
+        because the recomputation ``forward`` did per sample was pure waste:
+        `pi` never depended on z, only the final contraction did. See
+        docs/MODEL_CODE_FIXES.md item 3.1.
+        """
+        if z.dim() != 3:
+            raise ValueError(f"forward_multi expects z:[S,B,Dz], got shape {tuple(z.shape)}")
+        S = z.shape[0]
+
+        # train_head/prior_head are small MLPs over already-pooled hidden
+        # state, not the expensive part -- they still loop over samples.
+        train = torch.stack([self.train_head(hidden, z[s]) for s in range(S)], dim=0)   # [S, B, C]
+        prior = torch.stack([self.prior_head(hidden, z[s]) for s in range(S)], dim=0)   # [S, B, C]
+
+        if isinstance(inputs, dict):
+            input_ids = inputs.get("input_ids", None)
+            attention_mask = inputs.get("attention_mask", None)
+        else:
+            input_ids, attention_mask = None, None
+        if input_ids is None:
+            raise ValueError("Conv prior requires inputs to provide input_ids (HF-style dict).")
+
+        basis = self.conv_prior.basis(input_ids, attention_mask)  # [B, Dz, C] -- computed once
+        convp = self.conv_prior.contract(basis, z)                # [S, B, C]
+
+        return train + self.cfg.prior_scale * prior + self.cfg.conv_prior_scale * convp
+
 
 # ---------------------------------------------------------------------
 # epinet wrapper
@@ -295,31 +366,41 @@ class EpinetWrapper(nn.Module):
 
         if z is None:
             if n_index_samples == 1:
-                z = self.epinet.indexer(device=device, dtype=z_dtype)             # [B, Dz]
+                z = self.epinet.indexer(batch_size=B, device=device, dtype=z_dtype)  # [B, Dz]
             else:
-                # [S, Dz]
+                # [S, B, Dz] -- each of the S samples independently drawn
+                # per example, not one [Dz] vector shared by the batch.
                 z = torch.stack(
-                    [self.epinet.indexer(device=device, dtype=z_dtype) for _ in range(n_index_samples)],
+                    [self.epinet.indexer(batch_size=B, device=device, dtype=z_dtype) for _ in range(n_index_samples)],
                     dim=0
                 )
 
         # 3) Inputs to epinet
         inputs_for_epinet: Optional[Any] = None
         if extras is not None:
-            inputs_for_epinet = extras          
+            inputs_for_epinet = extras
         elif self.cfg.include_inputs:
             inputs_for_epinet = batch
 
-        # 4) Single vs multi z
-        if z.dim() == 1:
+        # 4) Single vs multi z: z:[B,Dz] is one sample (per-example),
+        # z:[S,B,Dz] is many samples (per-example each).
+        if z.dim() == 2:
             epi = self.epinet(hidden_for_epi, inputs_for_epinet, z)                  # [B, C]
             return mu + epi
 
-        outs = []
-        for s in range(z.shape[0]):
-            epi_s = self.epinet(hidden_for_epi, inputs_for_epinet, z[s])             # [B, C]
-            outs.append(mu + epi_s)
-        stacked = torch.stack(outs, dim=0)                                           # [S, B, C]
+        if hasattr(self.epinet, "forward_multi"):
+            # Fast path: the epinet computes its expensive per-index basis
+            # (e.g. the Dz frozen conv nets) once for the whole batch of z
+            # samples instead of once per sample. See docs/MODEL_CODE_FIXES.md
+            # item 3.1.
+            epi_all = self.epinet.forward_multi(hidden_for_epi, inputs_for_epinet, z)  # [S, B, C]
+            stacked = mu.unsqueeze(0) + epi_all
+        else:
+            outs = []
+            for s in range(z.shape[0]):
+                epi_s = self.epinet(hidden_for_epi, inputs_for_epinet, z[s])             # [B, C]
+                outs.append(mu + epi_s)
+            stacked = torch.stack(outs, dim=0)                                           # [S, B, C]
         return stacked if return_all else stacked.mean(0)
     
 
@@ -370,25 +451,46 @@ def predict(
     use_amp: bool = False,
     uncertainty_method: str = None,
     temperature: float = 1.0,
+    metadata_cols: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     One base forward + K epinet head forwards per batch (return_all=True),
     computes uncertainty from the full stack, and optionally saves outputs.
     """
-    # handle metadata columns first
+    # Capture any extra columns (e.g. sequence_id, motif_combo,
+    # num_selected_motifs, taxid, split) before they're dropped for the
+    # model's forward pass, so they can be written back into the output CSV
+    # and used to stratify results afterward (by taxon, motif combination,
+    # etc.) without rerunning inference. Previously computed then discarded
+    # -- see docs/MODEL_CODE_FIXES.md item 2.3.
     dataset = dataset.remove_columns(["sequence"])
-    print(len(dataset))
 
-    input_label_keys = {"input_ids", "attention_mask", "labels", "label"}
-    metadata_cols = [
-        c for c in dataset.column_names
-        if c not in input_label_keys
+    if metadata_cols is not None:
+        # Caller (inference.py) already knows exactly which columns are real
+        # metadata vs. tokenizer output -- use that instead of guessing.
+        metadata_cols = [c for c in metadata_cols if c in dataset.column_names]
+    else:
+        # No caller-provided list: fall back to excluding known model I/O
+        # columns. token_type_ids is BERT-style tokenizers' third output; if
+        # a future tokenizer adds another key not in this set, it will leak
+        # into metadata the same way token_type_ids did before this was added.
+        input_label_keys = {"input_ids", "attention_mask", "token_type_ids", "labels", "label"}
+        metadata_cols = [
+            c for c in dataset.column_names
+            if c not in input_label_keys
+        ]
+
+    def _plain(v):
+        # dataset.set_format(type="torch") wraps numeric metadata (e.g.
+        # num_selected_motifs) in 0-d tensors; string metadata (e.g.
+        # sequence_id) is left as-is since torch can't hold it. Unwrap the
+        # former so the CSV gets "2", not "tensor(2)".
+        return v.item() if isinstance(v, torch.Tensor) else v
+
+    metas = [
+        {col: _plain(dataset[col][i]) for col in metadata_cols}
+        for i in range(len(dataset))
     ]
-
-    # metas = [
-    #     {col: dataset[col][i] for col in metadata_cols}
-    #     for i in range(len(dataset))
-    # ]
 
     dataset = dataset.remove_columns(metadata_cols)
 
@@ -454,7 +556,7 @@ def predict(
                 for c in range(C):
                     row[f"prob_{c}"] = float(mean_probs[i, c])
 
-            rows.append({**row})# , **metas[idx]})
+            rows.append({**row, **metas[idx]})
             idx += 1
 
 
