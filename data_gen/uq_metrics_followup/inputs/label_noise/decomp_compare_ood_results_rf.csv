@@ -1,0 +1,13 @@
+method,score,variant,n,mean,std
+rf_kmer,bald_U_epistemic,real,1584,0.14963433,0.061366577
+rf_kmer,bald_U_epistemic,shuffled,1584,0.20173071,0.09091224
+rf_kmer,bald_U_epistemic,random_dna,1584,0.27678302,0.053934813
+rf_kmer,bald_U_aleatoric,real,1584,0.52815986,0.23699151
+rf_kmer,bald_U_aleatoric,shuffled,1584,0.49169844,0.20666713
+rf_kmer,bald_U_aleatoric,random_dna,1584,0.6656053,0.0795867
+rf_kmer,var_U_epistemic,real,1584,0.13612281,0.086773284
+rf_kmer,var_U_epistemic,shuffled,1584,0.19087783,0.124408305
+rf_kmer,var_U_epistemic,random_dna,1584,0.3063049,0.06409195
+rf_kmer,var_U_aleatoric,real,1584,0.4805069,0.23105955
+rf_kmer,var_U_aleatoric,shuffled,1584,0.44443288,0.19951203
+rf_kmer,var_U_aleatoric,random_dna,1584,0.6166288,0.0814434

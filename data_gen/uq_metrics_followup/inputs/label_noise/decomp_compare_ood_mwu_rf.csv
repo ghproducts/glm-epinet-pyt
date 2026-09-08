@@ -1,0 +1,9 @@
+comparison,U,p,score
+rf_kmer/bald_U_epistemic: shuffled > real,1691415.0,6.573756880626627e-65,bald_U_epistemic
+rf_kmer/bald_U_epistemic: random_dna > real,2351800.0,0.0,bald_U_epistemic
+rf_kmer/bald_U_aleatoric: shuffled > real,1095135.0,0.9999999997033479,bald_U_aleatoric
+rf_kmer/bald_U_aleatoric: random_dna > real,1618982.0,8.277489000157417e-46,bald_U_aleatoric
+rf_kmer/var_U_epistemic: shuffled > real,1565605.0,6.349513680873027e-34,var_U_epistemic
+rf_kmer/var_U_epistemic: random_dna > real,2351584.0,0.0,var_U_epistemic
+rf_kmer/var_U_aleatoric: shuffled > real,1104323.0,0.9999999973146517,var_U_aleatoric
+rf_kmer/var_U_aleatoric: random_dna > real,1637652.0,2.1005299309037432e-50,var_U_aleatoric

@@ -1,0 +1,192 @@
+axis,method,score,stat_type,stat_value,p,n,note
+label_noise_rate,conv_epinet,U_total,spearman,0.9819805060619657,8.648244862274892e-11,15,n=rate x seed points (3 seeds x 5 rates)
+label_noise_rate,conv_epinet,U_epistemic,spearman,0.7528517213141738,0.0011978412625517812,15,n=rate x seed points (3 seeds x 5 rates)
+label_noise_rate,conv_epinet,U_aleatoric,spearman,0.9819805060619657,8.648244862274892e-11,15,n=rate x seed points (3 seeds x 5 rates)
+label_noise_rate,mc_dropout,U_total,spearman,0.9819805060619657,8.648244862274892e-11,15,"n=rate x seed points (3 seeds x 5 rates); U_total = sum of means (exact, BALD linearity)"
+label_noise_rate,mc_dropout,U_epistemic,spearman,-0.971069611550166,1.8281168063183646e-09,15,"n=rate x seed points (3 seeds x 5 rates); U_total = sum of means (exact, BALD linearity)"
+label_noise_rate,mc_dropout,U_aleatoric,spearman,0.9819805060619657,8.648244862274892e-11,15,"n=rate x seed points (3 seeds x 5 rates); U_total = sum of means (exact, BALD linearity)"
+label_noise_rate,laplace,U_total,spearman,0.9819805060619657,8.648244862274892e-11,15,n=rate x seed points (3 seeds x 5 rates); U_total = sum of means
+label_noise_rate,laplace,U_epistemic,spearman,-0.9056042444793684,3.3956945865065905e-06,15,n=rate x seed points (3 seeds x 5 rates); U_total = sum of means
+label_noise_rate,laplace,U_aleatoric,spearman,0.9819805060619657,8.648244862274892e-11,15,n=rate x seed points (3 seeds x 5 rates); U_total = sum of means
+label_noise_rate,ensemble_k5,U_total,spearman,0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points only, no seed replication -- low-powered correlation"
+label_noise_rate,ensemble_k5,U_epistemic,spearman,-0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points only, no seed replication -- low-powered correlation"
+label_noise_rate,ensemble_k5,U_aleatoric,spearman,0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points only, no seed replication -- low-powered correlation"
+label_noise_rate,ensemble_k3,U_total,spearman,0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points only, no seed replication"
+label_noise_rate,ensemble_k3,U_epistemic,spearman,-0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points only, no seed replication"
+label_noise_rate,ensemble_k3,U_aleatoric,spearman,0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points only, no seed replication"
+label_noise_rate,evidential,U_total_proxy(vacuity+aleatoric),spearman,0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points; evidential has no true BALD U_epistemic (K=1) -- vacuity used as its epistemic-analogue; U_total_proxy = vacuity + U_aleatoric is NOT the BALD identity, just an ad hoc sum for comparability"
+label_noise_rate,evidential,vacuity(epistemic-analogue),spearman,0.8999999999999998,0.03738607346849874,5,"n=5 rate points; evidential has no true BALD U_epistemic (K=1) -- vacuity used as its epistemic-analogue; U_total_proxy = vacuity + U_aleatoric is NOT the BALD identity, just an ad hoc sum for comparability"
+label_noise_rate,evidential,U_aleatoric,spearman,0.9999999999999999,1.4042654220543602e-24,5,"n=5 rate points; evidential has no true BALD U_epistemic (K=1) -- vacuity used as its epistemic-analogue; U_total_proxy = vacuity + U_aleatoric is NOT the BALD identity, just an ad hoc sum for comparability"
+label_noise_rate,rf_kmer,U_total,spearman,0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+label_noise_rate,rf_kmer,U_epistemic,spearman,-0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+label_noise_rate,rf_kmer,U_aleatoric,spearman,0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+label_noise_rate,cnn_ensemble,U_total,spearman,0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+label_noise_rate,cnn_ensemble,U_epistemic,spearman,0.09999999999999999,0.8728885715695384,5,n=5 rate points only
+label_noise_rate,cnn_ensemble,U_aleatoric,spearman,0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+label_noise_rate,cnn_mc_dropout,U_total,spearman,0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+label_noise_rate,cnn_mc_dropout,U_epistemic,spearman,0.8999999999999998,0.03738607346849874,5,n=5 rate points only
+label_noise_rate,cnn_mc_dropout,U_aleatoric,spearman,0.9999999999999999,1.4042654220543602e-24,5,n=5 rate points only
+ood_severity,base,U_total,mwu(shuffled_vs_real),,0.00064,1584,"mean(real)=0.352, mean(shuffled)=0.397; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,base,U_total,mwu(random_dna_vs_real),,1.9e-34,1584,"mean(real)=0.352, mean(random_dna)=0.443; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,base_scaled,U_total,mwu(shuffled_vs_real),,0.002,1584,"mean(real)=0.326, mean(shuffled)=0.368; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,base_scaled,U_total,mwu(random_dna_vs_real),,8.6e-34,1584,"mean(real)=0.326, mean(random_dna)=0.407; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,mc_dropout,U_total,mwu(shuffled_vs_real),,0.355,1584,"mean(real)=0.39, mean(shuffled)=0.401; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,mc_dropout,U_total,mwu(random_dna_vs_real),,8e-11,1584,"mean(real)=0.39, mean(random_dna)=0.401; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,conv_epinet,U_total,mwu(shuffled_vs_real),,2.8e-05,1584,"mean(real)=0.415, mean(shuffled)=0.464; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,conv_epinet,U_total,mwu(random_dna_vs_real),,1.7e-43,1584,"mean(real)=0.415, mean(random_dna)=0.551; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,laplace,U_total,mwu(shuffled_vs_real),,0.00056,1584,"mean(real)=0.352, mean(shuffled)=0.401; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,laplace,U_total,mwu(random_dna_vs_real),,2e-36,1584,"mean(real)=0.352, mean(random_dna)=0.448; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,evidential,vacuity(primary score),mwu(shuffled_vs_real),,0.0073,1584,"mean(real)=0.237, mean(shuffled)=0.245; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,evidential,vacuity(primary score),mwu(random_dna_vs_real),,1.4e-49,1584,"mean(real)=0.237, mean(random_dna)=0.268; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,conformal,set_size(primary score),mwu(shuffled_vs_real),,0.064,1584,"mean(real)=1.037, mean(shuffled)=1.051; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,conformal,set_size(primary score),mwu(random_dna_vs_real),,0.531,1584,"mean(real)=1.037, mean(random_dna)=1.036; from .docs/ALL_METHODS_OOD_SEVERITY.md, reused verbatim"
+ood_severity,mc_dropout,U_epistemic,mwu(shuffled_vs_real),,4.2e-06,1584,"mean(real)=0.0122, mean(shuffled)=0.0159; from .docs/ALL_METHODS_OOD_SEVERITY.md"
+ood_severity,mc_dropout,U_epistemic,mwu(random_dna_vs_real),,2.7e-58,1584,"mean(real)=0.0122, mean(random_dna)=0.0156; from .docs/ALL_METHODS_OOD_SEVERITY.md"
+ood_severity,conv_epinet,U_epistemic,mwu(shuffled_vs_real),,0.0019,1584,"mean(real)=0.0714, mean(shuffled)=0.073; from .docs/ALL_METHODS_OOD_SEVERITY.md"
+ood_severity,conv_epinet,U_epistemic,mwu(random_dna_vs_real),,8.7e-27,1584,"mean(real)=0.0714, mean(random_dna)=0.0844; from .docs/ALL_METHODS_OOD_SEVERITY.md"
+ood_severity,laplace,U_epistemic,mwu(shuffled_vs_real),,0.00052,1584,"mean(real)=0.00165, mean(shuffled)=0.00196; from .docs/ALL_METHODS_OOD_SEVERITY.md"
+ood_severity,laplace,U_epistemic,mwu(random_dna_vs_real),,1.4e-17,1584,"mean(real)=0.00165, mean(random_dna)=0.00193; from .docs/ALL_METHODS_OOD_SEVERITY.md"
+ood_severity,mc_dropout,U_aleatoric,mwu(shuffled_vs_real),,0.5417148898553188,1584,from decomp_compare_ood_mwu.csv
+ood_severity,mc_dropout,U_aleatoric,mwu(random_dna_vs_real),,2.5757162467289807e-10,1584,from decomp_compare_ood_mwu.csv
+ood_severity,conv_epinet,U_aleatoric,mwu(shuffled_vs_real),,2.0960109717370567e-05,1584,from decomp_compare_ood_mwu.csv
+ood_severity,conv_epinet,U_aleatoric,mwu(random_dna_vs_real),,8.680527747362464e-36,1584,from decomp_compare_ood_mwu.csv
+ood_severity,ensemble_k5,U_total,mwu(shuffled_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3605, mean(shuffled)=0.3943 (BALD sum of means, exact); MWU not computable from aggregate mean/std alone -- GAP, would need per-example U_total"
+ood_severity,ensemble_k5,U_epistemic,mwu(shuffled_vs_real),,1.840959967707153e-15,1584,from decomp_compare_ood_mwu_ensemble.csv
+ood_severity,ensemble_k5,U_aleatoric,mwu(shuffled_vs_real),,0.0026745358282547,1584,from decomp_compare_ood_mwu_ensemble.csv
+ood_severity,ensemble_k5,U_total,mwu(random_dna_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3605, mean(random_dna)=0.4344 (BALD sum of means, exact); MWU not computable from aggregate mean/std alone -- GAP, would need per-example U_total"
+ood_severity,ensemble_k5,U_epistemic,mwu(random_dna_vs_real),,3.6875873547259037e-78,1584,from decomp_compare_ood_mwu_ensemble.csv
+ood_severity,ensemble_k5,U_aleatoric,mwu(random_dna_vs_real),,2.929467115341267e-29,1584,from decomp_compare_ood_mwu_ensemble.csv
+ood_severity,ensemble_k3,U_total,mwu(shuffled_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3612, mean(shuffled)=0.3946 (BALD sum of means, exact); MWU not computable from aggregate mean/std alone -- GAP, would need per-example U_total"
+ood_severity,ensemble_k3,U_epistemic,mwu(shuffled_vs_real),,0.0001270018355096,1584,from decomp_compare_ood_mwu_ensemble_k3.csv
+ood_severity,ensemble_k3,U_aleatoric,mwu(shuffled_vs_real),,0.0320627610634125,1584,from decomp_compare_ood_mwu_ensemble_k3.csv
+ood_severity,ensemble_k3,U_total,mwu(random_dna_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3612, mean(random_dna)=0.4243 (BALD sum of means, exact); MWU not computable from aggregate mean/std alone -- GAP, would need per-example U_total"
+ood_severity,ensemble_k3,U_epistemic,mwu(random_dna_vs_real),,8.643687267025455e-63,1584,from decomp_compare_ood_mwu_ensemble_k3.csv
+ood_severity,ensemble_k3,U_aleatoric,mwu(random_dna_vs_real),,5.102061251615883e-26,1584,from decomp_compare_ood_mwu_ensemble_k3.csv
+ood_severity,rf_kmer,U_total,mwu(shuffled_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.6778, mean(shuffled)=0.6934 (BALD sum of means, exact); MWU not computable from aggregate mean/std alone -- GAP, would need per-example U_total"
+ood_severity,rf_kmer,U_epistemic,mwu(shuffled_vs_real),,6.573756880626627e-65,1584,from decomp_compare_ood_mwu_rf.csv
+ood_severity,rf_kmer,U_aleatoric,mwu(shuffled_vs_real),,0.999999999703348,1584,from decomp_compare_ood_mwu_rf.csv
+ood_severity,rf_kmer,U_total,mwu(random_dna_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.6778, mean(random_dna)=0.9424 (BALD sum of means, exact); MWU not computable from aggregate mean/std alone -- GAP, would need per-example U_total"
+ood_severity,rf_kmer,U_epistemic,mwu(random_dna_vs_real),,0.0,1584,from decomp_compare_ood_mwu_rf.csv
+ood_severity,rf_kmer,U_aleatoric,mwu(random_dna_vs_real),,8.277489000157417e-46,1584,from decomp_compare_ood_mwu_rf.csv
+ood_severity,cnn_mc_dropout,U_total,mwu(shuffled_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3117, mean(shuffled)=0.3685 (BALD sum of means); MWU not computable -- GAP"
+ood_severity,cnn_mc_dropout,U_epistemic,mwu(shuffled_vs_real),,6.061474458358153e-09,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_mc_dropout,U_aleatoric,mwu(shuffled_vs_real),,1.2239435794792363e-09,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_mc_dropout,U_total,mwu(random_dna_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3117, mean(random_dna)=0.5961 (BALD sum of means); MWU not computable -- GAP"
+ood_severity,cnn_mc_dropout,U_epistemic,mwu(random_dna_vs_real),,1.6904872370072744e-114,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_mc_dropout,U_aleatoric,mwu(random_dna_vs_real),,6.569295722093503e-122,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_ensemble,U_total,mwu(shuffled_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3481, mean(shuffled)=0.3839 (BALD sum of means); MWU not computable -- GAP"
+ood_severity,cnn_ensemble,U_epistemic,mwu(shuffled_vs_real),,5.249869793143186e-07,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_ensemble,U_aleatoric,mwu(shuffled_vs_real),,1.3271097903685969e-06,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_ensemble,U_total,mwu(random_dna_vs_real),,,1584,"NO per-example U_total available -- mean(real)=0.3481, mean(random_dna)=0.6003 (BALD sum of means); MWU not computable -- GAP"
+ood_severity,cnn_ensemble,U_epistemic,mwu(random_dna_vs_real),,2.4081651727683167e-86,1584,from decomp_compare_ood_mwu_cnn.csv
+ood_severity,cnn_ensemble,U_aleatoric,mwu(random_dna_vs_real),,3.221368000986829e-95,1584,from decomp_compare_ood_mwu_cnn.csv
+margin_boundary,cnn_ensemble,U_total,spearman_vs_margin,-0.7816282487183509,0.0,1584,
+margin_boundary,cnn_ensemble,U_total,mwu(Q1_vs_Q4),154717.0,3.2362142266765715e-124,396+396,"mean(Q1)=0.6859, mean(Q4)=0.0322"
+margin_boundary,cnn_ensemble,U_epistemic,spearman_vs_margin,-0.7467770577016174,1.6203887678073807e-282,1584,
+margin_boundary,cnn_ensemble,U_epistemic,mwu(Q1_vs_Q4),153537.0,1.8247942451033955e-120,396+396,"mean(Q1)=0.2245, mean(Q4)=0.0051"
+margin_boundary,cnn_ensemble,U_aleatoric,spearman_vs_margin,-0.7746862726955048,0.0,1584,
+margin_boundary,cnn_ensemble,U_aleatoric,mwu(Q1_vs_Q4),154512.0,1.465228964228382e-123,396+396,"mean(Q1)=0.4613, mean(Q4)=0.0271"
+margin_boundary,cnn_mc_dropout,U_total,spearman_vs_margin,-0.6602670550635349,5.927140322347159e-199,1584,
+margin_boundary,cnn_mc_dropout,U_total,mwu(Q1_vs_Q4),147721.0,7.926523396193834e-103,396+396,"mean(Q1)=0.5457, mean(Q4)=0.0705"
+margin_boundary,cnn_mc_dropout,U_epistemic,spearman_vs_margin,-0.6315893314480165,4.4195472954321735e-177,1584,
+margin_boundary,cnn_mc_dropout,U_epistemic,mwu(Q1_vs_Q4),146046.0,5.204518887045085e-98,396+396,"mean(Q1)=0.1092, mean(Q4)=0.0106"
+margin_boundary,cnn_mc_dropout,U_aleatoric,spearman_vs_margin,-0.660948015905379,1.6749870976328423e-199,1584,
+margin_boundary,cnn_mc_dropout,U_aleatoric,mwu(Q1_vs_Q4),147496.0,3.572760892855163e-102,396+396,"mean(Q1)=0.4365, mean(Q4)=0.0599"
+margin_boundary,conv_epinet,U_total,spearman_vs_margin,-0.948416560272857,0.0,1584,
+margin_boundary,conv_epinet,U_total,mwu(Q1_vs_Q4),156816.0,4.936640604940433e-131,396+396,"mean(Q1)=0.8708, mean(Q4)=0.0863"
+margin_boundary,conv_epinet,U_epistemic,spearman_vs_margin,-0.837906838614118,0.0,1584,
+margin_boundary,conv_epinet,U_epistemic,mwu(Q1_vs_Q4),156320.0,2.093386164375923e-129,396+396,"mean(Q1)=0.1592, mean(Q4)=0.0089"
+margin_boundary,conv_epinet,U_aleatoric,spearman_vs_margin,-0.9522423714188745,0.0,1584,
+margin_boundary,conv_epinet,U_aleatoric,mwu(Q1_vs_Q4),156816.0,4.936640604940433e-131,396+396,"mean(Q1)=0.7116, mean(Q4)=0.0774"
+margin_boundary,ensemble_k3,U_total,spearman_vs_margin,-0.9852535771064937,0.0,1584,
+margin_boundary,ensemble_k3,U_total,mwu(Q1_vs_Q4),156816.0,4.936569745663342e-131,396+396,"mean(Q1)=0.8244, mean(Q4)=0.0538"
+margin_boundary,ensemble_k3,U_epistemic,spearman_vs_margin,-0.857653778464719,0.0,1584,
+margin_boundary,ensemble_k3,U_epistemic,mwu(Q1_vs_Q4),156532.0,4.231543864530553e-130,396+396,"mean(Q1)=0.0199, mean(Q4)=0.0000"
+margin_boundary,ensemble_k3,U_aleatoric,spearman_vs_margin,-0.9860002710832942,0.0,1584,
+margin_boundary,ensemble_k3,U_aleatoric,mwu(Q1_vs_Q4),156816.0,4.936569745663342e-131,396+396,"mean(Q1)=0.8045, mean(Q4)=0.0538"
+margin_boundary,ensemble_k5,U_total,spearman_vs_margin,-0.9856051174719096,0.0,1584,
+margin_boundary,ensemble_k5,U_total,mwu(Q1_vs_Q4),156816.0,4.936569745663342e-131,396+396,"mean(Q1)=0.8246, mean(Q4)=0.0534"
+margin_boundary,ensemble_k5,U_epistemic,spearman_vs_margin,-0.9142292555742073,0.0,1584,
+margin_boundary,ensemble_k5,U_epistemic,mwu(Q1_vs_Q4),156789.0,6.057218336136776e-131,396+396,"mean(Q1)=0.0275, mean(Q4)=0.0001"
+margin_boundary,ensemble_k5,U_aleatoric,spearman_vs_margin,-0.9860962597781322,0.0,1584,
+margin_boundary,ensemble_k5,U_aleatoric,mwu(Q1_vs_Q4),156816.0,4.936569745663342e-131,396+396,"mean(Q1)=0.7971, mean(Q4)=0.0533"
+margin_boundary,evidential,U_total,spearman_vs_margin,-0.9096699324107229,0.0,1584,
+margin_boundary,evidential,U_total,mwu(Q1_vs_Q4),156816.0,4.936463458641414e-131,396+396,"mean(Q1)=0.8785, mean(Q4)=0.4905"
+margin_boundary,evidential,U_epistemic,spearman_vs_margin,-0.05630600299748827,0.025028701141336956,1584,
+margin_boundary,evidential,U_epistemic,mwu(Q1_vs_Q4),85366.0,0.01265413339294146,396+396,"mean(Q1)=0.0000, mean(Q4)=-0.0000"
+margin_boundary,evidential,U_aleatoric,spearman_vs_margin,-0.9096704123537037,0.0,1584,
+margin_boundary,evidential,U_aleatoric,mwu(Q1_vs_Q4),156816.0,4.93642803013993e-131,396+396,"mean(Q1)=0.8785, mean(Q4)=0.4905"
+margin_boundary,laplace,U_total,spearman_vs_margin,-0.9562154082736112,0.0,1584,
+margin_boundary,laplace,U_total,mwu(Q1_vs_Q4),156816.0,4.936640604940433e-131,396+396,"mean(Q1)=0.8582, mean(Q4)=0.1305"
+margin_boundary,laplace,U_epistemic,spearman_vs_margin,-0.4881859350433417,1.2371318464521965e-95,1584,
+margin_boundary,laplace,U_epistemic,mwu(Q1_vs_Q4),133473.0,1.355161956367608e-65,396+396,"mean(Q1)=0.0593, mean(Q4)=0.0281"
+margin_boundary,laplace,U_aleatoric,spearman_vs_margin,-0.9726579913903931,0.0,1584,
+margin_boundary,laplace,U_aleatoric,mwu(Q1_vs_Q4),156816.0,4.936640604940433e-131,396+396,"mean(Q1)=0.7989, mean(Q4)=0.1024"
+margin_boundary,mc_dropout,U_total,spearman_vs_margin,-0.8785547880531158,0.0,1584,
+margin_boundary,mc_dropout,U_total,mwu(Q1_vs_Q4),156813.0,5.050166579136132e-131,396+396,"mean(Q1)=0.7748, mean(Q4)=0.0678"
+margin_boundary,mc_dropout,U_epistemic,spearman_vs_margin,-0.7148298858366573,5.057321848585363e-248,1584,
+margin_boundary,mc_dropout,U_epistemic,mwu(Q1_vs_Q4),155891.0,5.249668631354118e-128,396+396,"mean(Q1)=0.0488, mean(Q4)=0.0010"
+margin_boundary,mc_dropout,U_aleatoric,spearman_vs_margin,-0.8858302893170522,0.0,1584,
+margin_boundary,mc_dropout,U_aleatoric,mwu(Q1_vs_Q4),156815.0,4.974196646571229e-131,396+396,"mean(Q1)=0.7260, mean(Q4)=0.0668"
+margin_boundary,rf,U_total,spearman_vs_margin,-0.7753219370009855,0.0,1584,
+margin_boundary,rf,U_total,mwu(Q1_vs_Q4),152722.0,6.577496185701974e-118,396+396,"mean(Q1)=0.9071, mean(Q4)=0.3362"
+margin_boundary,rf,U_epistemic,spearman_vs_margin,-0.44295479933166826,4.197931435545008e-77,1584,
+margin_boundary,rf,U_epistemic,mwu(Q1_vs_Q4),125656.0,9.048929847782442e-49,396+396,"mean(Q1)=0.1732, mean(Q4)=0.1101"
+margin_boundary,rf,U_aleatoric,spearman_vs_margin,-0.8062977297706718,0.0,1584,
+margin_boundary,rf,U_aleatoric,mwu(Q1_vs_Q4),154787.0,1.930543529709427e-124,396+396,"mean(Q1)=0.7339, mean(Q4)=0.2261"
+margin_boundary,evidential,vacuity(epistemic-analogue),spearman_vs_margin,-0.9136809452621046,0.0,1584,
+margin_boundary,evidential,vacuity(epistemic-analogue),mwu(Q1_vs_Q4),156816.0,4.936498887396886e-131,396+396,"mean(Q1)=0.6007, mean(Q4)=0.2113"
+alisim_branch_length,cnn_ensemble,U_total,spearman_vs_branch_length,0.24434823267795142,1.2028367025720499e-87,6400,
+alisim_branch_length,cnn_ensemble,U_total,mwu(t=3.0_gt_t=0.0),114576.0,1.8461465786241353e-26,400+400,"mean(t=0)=0.3197, mean(t=3.0)=0.5702"
+alisim_branch_length,cnn_ensemble,U_epistemic,spearman_vs_branch_length,0.22407889322370333,1.1910216441132055e-73,6400,
+alisim_branch_length,cnn_ensemble,U_epistemic,mwu(t=3.0_gt_t=0.0),112164.0,3.7157798670884127e-23,400+400,"mean(t=0)=0.0986, mean(t=3.0)=0.1792"
+alisim_branch_length,cnn_ensemble,U_aleatoric,spearman_vs_branch_length,0.24649307536924203,3.3117227976386806e-89,6400,
+alisim_branch_length,cnn_ensemble,U_aleatoric,mwu(t=3.0_gt_t=0.0),115095.0,3.3474991346798654e-27,400+400,"mean(t=0)=0.2210, mean(t=3.0)=0.3910"
+alisim_branch_length,cnn_mc_dropout,U_total,spearman_vs_branch_length,0.2867714552590587,2.062106178123596e-121,6400,
+alisim_branch_length,cnn_mc_dropout,U_total,mwu(t=3.0_gt_t=0.0),117460.0,1.0186956103871966e-30,400+400,"mean(t=0)=0.2931, mean(t=3.0)=0.5587"
+alisim_branch_length,cnn_mc_dropout,U_epistemic,spearman_vs_branch_length,0.2691255247284035,1.2951799968190773e-106,6400,
+alisim_branch_length,cnn_mc_dropout,U_epistemic,mwu(t=3.0_gt_t=0.0),114950.0,5.4074120024278445e-27,400+400,"mean(t=0)=0.0561, mean(t=3.0)=0.1116"
+alisim_branch_length,cnn_mc_dropout,U_aleatoric,spearman_vs_branch_length,0.2872642766588382,7.678078942329873e-122,6400,
+alisim_branch_length,cnn_mc_dropout,U_aleatoric,mwu(t=3.0_gt_t=0.0),117399.0,1.263529083277177e-30,400+400,"mean(t=0)=0.2370, mean(t=3.0)=0.4471"
+alisim_branch_length,conv_epinet,U_total,spearman_vs_branch_length,0.1421198249944024,3.1220667196332553e-30,6400,
+alisim_branch_length,conv_epinet,U_total,mwu(t=3.0_gt_t=0.0),103793.0,1.664322372883411e-13,400+400,"mean(t=0)=0.4015, mean(t=3.0)=0.5509"
+alisim_branch_length,conv_epinet,U_epistemic,spearman_vs_branch_length,0.12197529621162596,1.2101864017464218e-22,6400,
+alisim_branch_length,conv_epinet,U_epistemic,mwu(t=3.0_gt_t=0.0),101470.0,2.5232026022594483e-11,400+400,"mean(t=0)=0.0644, mean(t=3.0)=0.0920"
+alisim_branch_length,conv_epinet,U_aleatoric,spearman_vs_branch_length,0.14304464942986717,1.311189361921147e-30,6400,
+alisim_branch_length,conv_epinet,U_aleatoric,mwu(t=3.0_gt_t=0.0),103543.0,2.925971776798702e-13,400+400,"mean(t=0)=0.3371, mean(t=3.0)=0.4589"
+alisim_branch_length,ensemble_k3,U_total,spearman_vs_branch_length,0.1301604392164668,1.3855173416788433e-25,6400,
+alisim_branch_length,ensemble_k3,U_total,mwu(t=3.0_gt_t=0.0),101586.0,1.9868390938978305e-11,400+400,"mean(t=0)=0.3345, mean(t=3.0)=0.4445"
+alisim_branch_length,ensemble_k3,U_epistemic,spearman_vs_branch_length,0.12913717732911115,3.3105875638183234e-25,6400,
+alisim_branch_length,ensemble_k3,U_epistemic,mwu(t=3.0_gt_t=0.0),102315.0,4.301544840921316e-12,400+400,"mean(t=0)=0.0065, mean(t=3.0)=0.0092"
+alisim_branch_length,ensemble_k3,U_aleatoric,spearman_vs_branch_length,0.13036025002230903,1.1678552599499636e-25,6400,
+alisim_branch_length,ensemble_k3,U_aleatoric,mwu(t=3.0_gt_t=0.0),101533.0,2.2164106860369405e-11,400+400,"mean(t=0)=0.3280, mean(t=3.0)=0.4353"
+alisim_branch_length,ensemble_k5,U_total,spearman_vs_branch_length,0.14517285195639293,1.7421673603126006e-31,6400,
+alisim_branch_length,ensemble_k5,U_total,mwu(t=3.0_gt_t=0.0),103729.0,1.923993944185619e-13,400+400,"mean(t=0)=0.3312, mean(t=3.0)=0.4522"
+alisim_branch_length,ensemble_k5,U_epistemic,spearman_vs_branch_length,0.19069804074912586,1.786492305911023e-53,6400,
+alisim_branch_length,ensemble_k5,U_epistemic,mwu(t=3.0_gt_t=0.0),108136.0,3.67465920383909e-18,400+400,"mean(t=0)=0.0091, mean(t=3.0)=0.0159"
+alisim_branch_length,ensemble_k5,U_aleatoric,spearman_vs_branch_length,0.1429533760544953,1.4287693392146389e-30,6400,
+alisim_branch_length,ensemble_k5,U_aleatoric,mwu(t=3.0_gt_t=0.0),103307.0,4.957804485070551e-13,400+400,"mean(t=0)=0.3221, mean(t=3.0)=0.4363"
+alisim_branch_length,evidential,U_total,spearman_vs_branch_length,0.03281731496316858,0.00865015976100148,6400,
+alisim_branch_length,evidential,U_total,mwu(t=3.0_gt_t=0.0),87003.0,0.016067384365410775,400+400,"mean(t=0)=0.9908, mean(t=3.0)=0.9770"
+alisim_branch_length,evidential,U_epistemic,spearman_vs_branch_length,0.03601094882368281,0.003961042878188428,6400,
+alisim_branch_length,evidential,U_epistemic,mwu(t=3.0_gt_t=0.0),87055.0,0.01543897802244788,400+400,"mean(t=0)=0.3534, mean(t=3.0)=0.3413"
+alisim_branch_length,evidential,U_aleatoric,spearman_vs_branch_length,0.030765791353976415,0.01384094142511658,6400,
+alisim_branch_length,evidential,U_aleatoric,mwu(t=3.0_gt_t=0.0),87018.5,0.015877816245169412,400+400,"mean(t=0)=0.6374, mean(t=3.0)=0.6357"
+alisim_branch_length,laplace,U_total,spearman_vs_branch_length,0.1404504847335681,1.472955806528316e-29,6400,
+alisim_branch_length,laplace,U_total,mwu(t=3.0_gt_t=0.0),102950.0,1.0901881908617325e-12,400+400,"mean(t=0)=0.3978, mean(t=3.0)=0.5355"
+alisim_branch_length,laplace,U_epistemic,spearman_vs_branch_length,0.14708268624405813,2.7740716539069185e-32,6400,
+alisim_branch_length,laplace,U_epistemic,mwu(t=3.0_gt_t=0.0),103498.0,3.236761967268026e-13,400+400,"mean(t=0)=0.0398, mean(t=3.0)=0.0558"
+alisim_branch_length,laplace,U_aleatoric,spearman_vs_branch_length,0.13773360082799824,1.7672133796671177e-28,6400,
+alisim_branch_length,laplace,U_aleatoric,mwu(t=3.0_gt_t=0.0),102787.0,1.5561711063950806e-12,400+400,"mean(t=0)=0.3580, mean(t=3.0)=0.4797"
+alisim_branch_length,mc_dropout,U_total,spearman_vs_branch_length,-0.06976095879544839,2.3156720589613934e-08,6400,
+alisim_branch_length,mc_dropout,U_total,mwu(t=3.0_gt_t=0.0),72177.0,0.9916660378169615,400+400,"mean(t=0)=0.4141, mean(t=3.0)=0.3040"
+alisim_branch_length,mc_dropout,U_epistemic,spearman_vs_branch_length,0.034928794689226376,0.005196228736798058,6400,
+alisim_branch_length,mc_dropout,U_epistemic,mwu(t=3.0_gt_t=0.0),87676.0,0.009420428305936264,400+400,"mean(t=0)=0.0270, mean(t=3.0)=0.0276"
+alisim_branch_length,mc_dropout,U_aleatoric,spearman_vs_branch_length,-0.07835961161954949,3.4472953057762346e-10,6400,
+alisim_branch_length,mc_dropout,U_aleatoric,mwu(t=3.0_gt_t=0.0),71349.0,0.9959433251554929,400+400,"mean(t=0)=0.3870, mean(t=3.0)=0.2764"
+alisim_branch_length,rf_kmer,U_total,spearman_vs_branch_length,0.3591440263697618,3.855542884996796e-194,6400,
+alisim_branch_length,rf_kmer,U_total,mwu(t=3.0_gt_t=0.0),130896.0,5.4871820616468506e-55,400+400,"mean(t=0)=0.6581, mean(t=3.0)=0.9250"
+alisim_branch_length,rf_kmer,U_epistemic,spearman_vs_branch_length,0.5625180820901792,0.0,6400,
+alisim_branch_length,rf_kmer,U_epistemic,mwu(t=3.0_gt_t=0.0),150423.0,2.7089381962076075e-103,400+400,"mean(t=0)=0.1457, mean(t=3.0)=0.2690"
+alisim_branch_length,rf_kmer,U_aleatoric,spearman_vs_branch_length,0.17944725755665897,1.8588611664798282e-47,6400,
+alisim_branch_length,rf_kmer,U_aleatoric,mwu(t=3.0_gt_t=0.0),105661.0,2.0475094845993085e-15,400+400,"mean(t=0)=0.5124, mean(t=3.0)=0.6560"

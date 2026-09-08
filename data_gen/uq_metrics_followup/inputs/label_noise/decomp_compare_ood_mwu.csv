@@ -1,0 +1,17 @@
+comparison,U,p,method,score
+mc_dropout/bald_U_epistemic: shuffled > real,1383265.0,2.848421848737486e-07,mc_dropout,bald_U_epistemic
+mc_dropout/bald_U_epistemic: random_dna > real,1686579.0,1.5839913415935067e-63,mc_dropout,bald_U_epistemic
+mc_dropout/bald_U_aleatoric: shuffled > real,1251832.0,0.5417148898553188,mc_dropout,bald_U_aleatoric
+mc_dropout/bald_U_aleatoric: random_dna > real,1414494.0,2.575716246728981e-10,mc_dropout,bald_U_aleatoric
+mc_dropout/var_U_epistemic: shuffled > real,1340628.0,0.00041165473933541127,mc_dropout,var_U_epistemic
+mc_dropout/var_U_epistemic: random_dna > real,1589454.0,5.272741994838352e-39,mc_dropout,var_U_epistemic
+mc_dropout/var_U_aleatoric: shuffled > real,1253740.0,0.5122185079538231,mc_dropout,var_U_aleatoric
+mc_dropout/var_U_aleatoric: random_dna > real,1418944.0,8.442197910347363e-11,mc_dropout,var_U_aleatoric
+conv_epinet/bald_U_epistemic: shuffled > real,1336237.0,0.0007511129543155274,conv_epinet,bald_U_epistemic
+conv_epinet/bald_U_epistemic: random_dna > real,1526241.0,2.3922291805255674e-26,conv_epinet,bald_U_epistemic
+conv_epinet/bald_U_aleatoric: shuffled > real,1359980.0,2.0960109717370567e-05,conv_epinet,bald_U_aleatoric
+conv_epinet/bald_U_aleatoric: random_dna > real,1574559.5,8.680527747362464e-36,conv_epinet,bald_U_aleatoric
+conv_epinet/var_U_epistemic: shuffled > real,1350458.0,9.699472542641262e-05,conv_epinet,var_U_epistemic
+conv_epinet/var_U_epistemic: random_dna > real,1536568.0,3.0815740362309163e-28,conv_epinet,var_U_epistemic
+conv_epinet/var_U_aleatoric: shuffled > real,1359305.0,2.3465181278354544e-05,conv_epinet,var_U_aleatoric
+conv_epinet/var_U_aleatoric: random_dna > real,1572712.0,2.125415861818204e-35,conv_epinet,var_U_aleatoric
