@@ -54,6 +54,11 @@ training_tasks:
     tests:
       promoter_all: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/promoter_all
       enhancers: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/enhancers
+      # Graded epistemic/OOD severity axis: real promoter_all test anchors
+      # evolved away from themselves via AliSim (HKY+Gamma4) over a fixed
+      # branch-length grid. Eval-only -- shares promoter_all's label space,
+      # not a separate training recipe. See data_gen/promoter_alisim/README.md.
+      promoter_alisim: data_gen/promoter_alisim/csv_data/promoter_alisim.csv
 
   enhancers_types:
     data_path: InstaDeepAI/nucleotide_transformer_downstream_tasks_revised/enhancers_types
@@ -90,6 +95,73 @@ training_tasks:
       test_ID: data_gen/promoter_motifs/csv_data/test_ID.csv
       test_matched_ID: data_gen/promoter_motifs/csv_data/test_matched_ID.csv
       test_OOD: data_gen/promoter_motifs/csv_data/test_OOD.csv
+
+  # v2: class-balance-corrected, spans two motif-count strata instead of
+  # one. See data_gen/promoter_motifs/make_splits_v2.py and
+  # docs/REVISION_PLAN.md. Prefer this over promoter_motifs above.
+  promoter_motifs_v2:
+    data_path: data_gen/promoter_motifs/csv_data_v2/train.csv
+    seq_length: 251
+    num_labels: 2
+    tests:
+      test_ID: data_gen/promoter_motifs/csv_data_v2/test_ID.csv
+      test_matched_ID: data_gen/promoter_motifs/csv_data_v2/test_matched_ID.csv
+      test_OOD: data_gen/promoter_motifs/csv_data_v2/test_OOD.csv
+
+  # v3: adds a second shift condition (novel motif entirely, not just novel
+  # combination) alongside v2's, each with its own matched-ID control. See
+  # data_gen/promoter_motifs/make_splits_v3.py and docs/REVISION_PLAN.md.
+  promoter_motifs_v3:
+    data_path: data_gen/promoter_motifs/csv_data_v3/train.csv
+    seq_length: 251
+    num_labels: 2
+    tests:
+      test_ID: data_gen/promoter_motifs/csv_data_v3/test_ID.csv
+      test_matched_ID_nearID: data_gen/promoter_motifs/csv_data_v3/test_matched_ID_nearID.csv
+      test_matched_ID_nearOOD: data_gen/promoter_motifs/csv_data_v3/test_matched_ID_nearOOD.csv
+      test_nearID: data_gen/promoter_motifs/csv_data_v3/test_nearID.csv
+      test_nearOOD: data_gen/promoter_motifs/csv_data_v3/test_nearOOD.csv
+
+  # Label-noise pilot (uniform random label flips on promoter_all, stratified
+  # by original label so P(label=1) is unchanged at every rate). See
+  # data_gen/label_noise/make_noisy_labels.py and .docs/LABEL_NOISE_PILOT.md.
+  # Each rate's `tests.test` points at its own directory's test.csv; all five
+  # are byte-identical (verified by make_noisy_labels.py's verify()) since
+  # the test split is never touched by the noise injector.
+  label_noise_r00:
+    data_path: data_gen/label_noise/csv_data_r00/train.csv
+    seq_length: 300
+    num_labels: 2
+    tests:
+      test: data_gen/label_noise/csv_data_r00/test.csv
+
+  label_noise_r05:
+    data_path: data_gen/label_noise/csv_data_r05/train.csv
+    seq_length: 300
+    num_labels: 2
+    tests:
+      test: data_gen/label_noise/csv_data_r05/test.csv
+
+  label_noise_r10:
+    data_path: data_gen/label_noise/csv_data_r10/train.csv
+    seq_length: 300
+    num_labels: 2
+    tests:
+      test: data_gen/label_noise/csv_data_r10/test.csv
+
+  label_noise_r20:
+    data_path: data_gen/label_noise/csv_data_r20/train.csv
+    seq_length: 300
+    num_labels: 2
+    tests:
+      test: data_gen/label_noise/csv_data_r20/test.csv
+
+  label_noise_r40:
+    data_path: data_gen/label_noise/csv_data_r40/train.csv
+    seq_length: 300
+    num_labels: 2
+    tests:
+      test: data_gen/label_noise/csv_data_r40/test.csv
 
   # One trained model per taxonomic rank over the same simulated reads. The
   # rank is passed through --taxa_rank, which remaps the family-level label in
