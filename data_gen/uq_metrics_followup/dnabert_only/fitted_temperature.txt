@@ -1,4 +1,0 @@
-T=1.1496275663375854
-n_val=3000
-data_seed=42
-checkpoint=/scratch/home/glh52/glm-epinet-pyt/checkpoints/seed_1/DNABERT2/label_noise_r00/base
