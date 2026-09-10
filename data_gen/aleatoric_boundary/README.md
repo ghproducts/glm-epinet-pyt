@@ -619,3 +619,56 @@ produced `csv_data/margin_scores.csv` and the original 3-method
   as ensemble *members*, not as repeated independent trials of the same
   experiment) -- no cross-seed variance estimate on top of what each
   method's own K-sample decomposition already provides.
+
+## Retrain follow-up: `conv_epinet` re-run under `epinet_zfix` (fixing a critique finding)
+
+The note directly above ("`epinet.py` left untouched in this pass") is now
+superseded for `conv_epinet` specifically. An independent critique
+(`data_gen/uq_metrics_followup/critique_independent.md`, Finding 1.1) found
+that `checkpoints/seed_1/DNABERT2/label_noise_r00/epinet` — the checkpoint
+this file's `conv_epinet` numbers used throughout — **predates the
+per-example-`z` fix** (`fb38241`, committed 2026-09-07; checkpoint trained
+2026-09-03) and was only ever run through the FIXED `epinet.py` at
+*inference* time, never retrained under it. `train_epinet.py` uses
+`k_train=8`, so every training step under the old code drew 8 batch-shared
+`z` vectors rather than 8×B independent per-example draws — a real
+train/inference mismatch, not just a provenance technicality (see
+`data_gen/promoter_alisim/README.md`'s "Retrain + grid extension follow-up"
+section for the full mechanical explanation and the new checkpoint's
+training details, identical procedure used here).
+
+`run_conv_epinet_zfix.py` re-runs `conv_epinet` on the same 1584-example
+margin-quartile test set, same tokenizer/DataLoader/K/row-order as
+`make_boundary_eval.py`'s original `run_conv_epinet`, under the retrained
+`checkpoints/seed_1/DNABERT2/label_noise_r00/epinet_zfix` checkpoint. Output:
+`csv_data/conv_epinet_zfix.csv` (the updated 1584 `conv_epinet` rows) and
+`csv_data/uncertainty_by_method_zfix.csv` (the full 9-method file with
+`conv_epinet` replaced by the zfix rows — the original
+`uncertainty_by_method.csv` is kept untouched for provenance). No new
+sequences/quartiles needed re-deriving: margin quartiles come from the
+`base` checkpoint, which the epinet fix/retrain never touches.
+
+**Does retraining change the conclusion? No — the epistemic-conflates-with-aleatoric-near-a-boundary
+finding is unchanged, and if anything slightly stronger in relative terms.**
+Full numbers in
+`data_gen/uq_metrics_followup/epinet_retrain_zfix/conv_epinet_old_vs_new_boundary.csv`:
+
+| checkpoint | Q1 `U_epistemic` | Q4 `U_epistemic` | Q1/Q4 ratio | Q1 `U_aleatoric` | Q4 `U_aleatoric` |
+|---|---:|---:|---:|---:|---:|
+| OLD (stale, pre-fix trained) | 0.1592 | 0.00893 | 17.8× | 0.7116 | 0.0774 |
+| NEW (`epinet_zfix`) | 0.0673 | 0.00251 | 26.8× | 0.7781 | 0.0629 |
+
+Both checkpoints show the same pattern: `U_epistemic` rises sharply and
+highly significantly (Mann-Whitney Q1>Q4, p≈1e-130 for both) approaching the
+decision boundary, exactly mirroring `U_aleatoric`'s own rise there — the
+core "this looks like a structural property of variance-based decompositions
+near a 50/50 boundary, not a genomics-specific finding" conclusion is
+unaffected. As on the AliSim axis, the retrained checkpoint's absolute
+`U_epistemic` magnitudes are smaller (~2.4× at Q1) than the stale
+checkpoint's, consistent with the stale, batch-shared-`z`-trained head
+producing eval-time outputs that happen to spread out more under the
+patched sampling code — but the *relative* Q1-vs-Q4 signal is, if anything,
+larger for the correctly-trained checkpoint. Updated pooled/stratified
+ECE/NLL/Brier (all 11 methods, `conv_epinet` from `epinet_zfix`) are in
+`data_gen/uq_metrics_followup/dnabert_only/pooled_ece_allmethods_extended_zfix.csv`
+and `stratified_ece_allmethods_extended_zfix.csv`.

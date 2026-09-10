@@ -1,0 +1,65 @@
+IQ-TREE multicore version 2.4.0 for Linux x86 64-bit built Feb  7 2025
+Developed by Bui Quang Minh, Nguyen Lam Tung, Olga Chernomor, Heiko Schmidt,
+Dominik Schrempf, Michael Woodhams, Ly Trong Nhan, Thomas Wong
+
+Host:    a100 (AVX512, FMA3, 1511 GB RAM)
+Command: /scratch/home/glh52/tools/iqtree-2.4.0-Linux-intel/bin/iqtree2 --alisim /scratch/home/glh52/glm-epinet-pyt/.claude/worktrees/agent-ad064a1f05d218c98/data_gen/promoter_alisim/pilot_extended/iqtree_work/anchor_0004/out -t /scratch/home/glh52/glm-epinet-pyt/.claude/worktrees/agent-ad064a1f05d218c98/data_gen/promoter_alisim/pilot_extended/iqtree_work/anchor_0004/star.tree -m HKY{2.0}+F{0.246065/0.24993/0.255971/0.248034}+G4{1.0} --root-seq /scratch/home/glh52/glm-epinet-pyt/.claude/worktrees/agent-ad064a1f05d218c98/data_gen/promoter_alisim/pilot_extended/iqtree_work/anchor_0004/root.fasta,anchor --seed 20260911 -af fasta
+Seed:    20260911 (Using SPRNG - Scalable Parallel Random Number Generator)
+Time:    Thu Sep 10 15:12:36 2026
+Kernel:  AVX+FMA - 1 threads (168 CPU cores detected)
+
+[Alignment Simulator] Executing
+ - Tree filepath: /scratch/home/glh52/glm-epinet-pyt/.claude/worktrees/agent-ad064a1f05d218c98/data_gen/promoter_alisim/pilot_extended/iqtree_work/anchor_0004/star.tree
+ - Length of output sequences: 1000
+ - Model: HKY{2.0}+F{0.246065/0.24993/0.255971/0.248034}+G4{1.0}
+ - Number of output datasets: 1
+Fasta format detected
+Reading fasta file: done in 2.566e-05 secs using 46.77% CPU
+WARNING: Sequence length is now set equally to the length of ancestral sequence.
+WARNING: Using an ancestral sequence with base frequencies that are not compatible with the specification of the model may lead to unexpected results.
+ - Number of threads: 1
+SUBSTITUTION PROCESS
+--------------------
+
+Model of substitution: HKY+FU+G4
+
+Rate parameter R:
+
+  A-C: 1.000
+  A-G: 2.000
+  A-T: 1.000
+  C-G: 1.000
+  C-T: 2.000
+  G-T: 1.000
+
+State frequencies: (user-defined)
+
+  pi(A) = 0.246
+  pi(C) = 0.25
+  pi(G) = 0.256
+  pi(T) = 0.248
+
+Rate matrix Q:
+
+  A     -1.01      0.25     0.512     0.248
+  C     0.246    -0.998     0.256     0.496
+  G     0.492      0.25     -0.99     0.248
+  T     0.246       0.5     0.256        -1
+
+Model of rate heterogeneity: Gamma with 4 categories
+Gamma shape alpha: 1
+
+ Category  Relative_rate  Proportion
+  1         0.137          0.25
+  2         0.477          0.25
+  3         1              0.25
+  4         2.39           0.25
+Relative rates are computed as MEAN of the portion of the Gamma distribution falling in the category.
+
+An alignment written to /scratch/home/glh52/glm-epinet-pyt/.claude/worktrees/agent-ad064a1f05d218c98/data_gen/promoter_alisim/pilot_extended/iqtree_work/anchor_0004/out.fa
+Screen log file: /scratch/home/glh52/glm-epinet-pyt/.claude/worktrees/agent-ad064a1f05d218c98/data_gen/promoter_alisim/pilot_extended/iqtree_work/anchor_0004/star.tree.log
+[Alignment Simulator] Done
+Simulation CPU time: 0.004 sec (0h:0m:0s)
+Simulation wall-clock time: 0.005 sec (0h:0m:0s)
+
+Date and Time: Thu Sep 10 15:12:36 2026
