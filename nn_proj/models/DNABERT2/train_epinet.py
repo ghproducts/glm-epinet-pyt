@@ -124,6 +124,20 @@ def train():
                                    data_collator=data_collator)
     trainer.train()
 
+    # Always write the trained weights to the TOP LEVEL of output_dir (not
+    # just the per-epoch checkpoint-N/ subdirs Trainer writes during
+    # training) so inference/eval scripts that load
+    # `<output_dir>/model.safetensors` directly (e.g.
+    # data_gen/promoter_alisim/uncertainty_eval/*/run_uncertainty_eval*.py)
+    # find a checkpoint without needing to know a specific step number.
+    # Previously this depended entirely on the buggy `--save_model` block
+    # below (which crashed on `train_dataset.features["label"]` -- the
+    # tokenized column is named "labels", not "label" -- so it never ran to
+    # completion when actually invoked); pulled out so a top-level save
+    # always happens regardless of that flag/bug.
+    trainer.save_model(training_args.output_dir)
+    tokenizer.save_pretrained(training_args.output_dir)
+
     # save epinet model
     if training_args.save_model:
         trainer.save_state()  # optional: trainer internals
@@ -134,13 +148,12 @@ def train():
             {
                 "state_dict": model.state_dict(),
                 "base_model_name": model_args.model_name_or_path,
-                "num_labels": train_dataset.features["label"].num_classes,
+                "num_labels": train_dataset.features["labels"].num_classes,
                 "epinet_cfg": model.cfg.__dict__,   # EpinetConfig fields
                 "feature_fn": "NT_feature_fn",      # or "NT_tokens_feature_fn"
             },
             os.path.join(training_args.output_dir, "model_epinet.pt"),
         )
-        tokenizer.save_pretrained(training_args.output_dir)
 
 
 

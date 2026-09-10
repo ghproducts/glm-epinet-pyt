@@ -621,3 +621,207 @@ data-driven interpretation across all 9 configurations. Headline findings:
   -- reported plainly as a roster-wide, not method-specific, limitation of
   this project's aleatoric/epistemic decomposition under real evolutionary
   input novelty.
+
+## Retrain + grid extension follow-up (fixing a critique finding)
+
+An independent critique of this session's work
+(`data_gen/uq_metrics_followup/critique_independent.md`, Finding 1.1) flagged
+that **`conv_epinet`'s checkpoint (`checkpoints/seed_1/DNABERT2/label_noise_r00/epinet`)
+was trained BEFORE the per-example-`z` fix (`fb38241`) existed** — the fix
+was only ever applied as an eval-time monkeypatch (swapping in the fixed
+`epinet.py` before running inference), never by retraining the epinet head
+itself under the corrected sampling code. Since `train_epinet.py` trains
+with `k_train=8` index samples per step, every training step under the old
+code drew 8 *batch-shared* `z` vectors, not 8×B independent per-example
+draws — a materially different training signal than the fixed code's
+semantics. Patching only the inference-time sampling doesn't retroactively
+give the trained `train_head`/`prior_head`/`conv_prior` weights the training
+signal they'd need for a *meaningful* per-example index mapping. This
+section fixes that, and simultaneously extends the branch-length axis
+further past its previous top end.
+
+### 1. Retrained checkpoint: `epinet_zfix`
+
+`checkpoints/seed_1/DNABERT2/label_noise_r00/epinet_zfix/` — trained via
+`nn_proj/models/DNABERT2/train_epinet.py` under the FIXED `epinet.py`
+(pulled wholesale from `worktree-fix-epinet-batch-z`, same file already used
+for eval-time patching above), from scratch, on the same frozen `base`
+checkpoint, same data (`data_gen/label_noise/csv_data_r00/train.csv`, 0%
+noise = clean `promoter_all`), same hyperparameters as the original
+checkpoint (LR 2e-5, 2 epochs, `k_train=8`, `index_dim=30`,
+`hidden_sizes=[50]`, `prior_scale=1.0`, `conv_prior_scale=1.0`, seed 1 — all
+from `configs/experiments.yaml`'s `epinet:` block). The original `epinet/`
+checkpoint is kept, untouched, for provenance/comparison.
+
+Training converged normally and reproducibly: loss 0.38 → 0.25 over 1688
+steps (2 epochs), final `eval_accuracy=0.887` — matching the original
+checkpoint's ~87-88% on clean `promoter_all` closely. Two incidental
+environment/code issues were fixed to get here (documented in
+`nn_proj/models/DNABERT2/train_epinet.py`'s diff and this repo's git
+history, not specific to this dataset): (a) `glm_epinet_venv`'s installed
+`triton` (3.2.0) is API-incompatible with DNABERT2's bundled
+`flash_attn_triton.py` kernel (`tl.dot(..., trans_b=True)`, a pre-Triton-3.0
+call signature) and had to be blocked at import time for the training
+process, exactly mirroring what already happens implicitly in
+`aleatoric_boundary_venv` (no triton installed there at all, which is why
+inference under that venv was never affected); (b) `train_epinet.py`'s
+`--save_model` branch had a latent `KeyError: 'label'` bug (the tokenized
+column is named `"labels"`) that meant it never actually completed when
+invoked — and, since `run_grid.py` never passes `--save_model` in the first
+place, the *original* checkpoint's top-level `model.safetensors` in fact
+came from `transformers.Trainer`'s own default final-model save, not from
+that branch. Both are now fixed directly in `train_epinet.py` (a `trainer.save_model()` call
+was added unconditionally after `trainer.train()`, and the `"label"` typo
+fixed) so it now works either way.
+
+### 2. Extended branch-length grid: 5.0, 8.0, 12.0
+
+The dense 16-point grid topped out at branch_length=3.0, where mean
+`realized_identity_to_anchor` was still 0.392 — well above the ~0.25
+theoretical floor for this substitution model's stationary base-frequency
+distribution, raising the question (flagged by the same critique, §2.1)
+of whether the axis had reached genuine saturation.
+`make_alisim_data_extended.py` (direct template: `make_alisim_data_dense.py`
+— same 400 anchors, same seed 20260907, same
+`HKY{2.0}+F{0.246065/0.24993/0.255971/0.248034}+G4{1.0}` model, same AliSim
+invocation pattern) generates 3 more points, **5.0, 8.0, 12.0**, for the
+same 400 anchors: `csv_data/promoter_alisim_extended.csv` (400 × 3 = 1200
+rows, extending — not replacing — the dense grid).
+
+Mean identity **does keep decreasing**, but slowly, and has **not fully
+reached the 0.25 floor even at branch_length=12.0** (4× the previous max):
+
+| branch_length | mean identity |
+|---:|---:|
+| 3.0 (previous max) | 0.392 |
+| 5.0 | 0.340 |
+| 8.0 | 0.301 |
+| 12.0 | 0.274 |
+
+This confirms the critique's suspicion that Gamma(4, shape=1.0) rate
+heterogeneity makes bulk-average identity converge to the stationary floor
+much more slowly than a single-rate model would (a minority of sites drawing
+very low rates barely substitute even at branch_length=12), so "well past
+typical divergence" in the original framing understated how far this axis
+still was from true compositional randomization. It also means: **even the
+extended grid's endpoint is not full decorrelation** — take the
+epistemic-response numbers below as evidence from a genuinely more
+divergent, but still not fully saturated, input distribution.
+
+### 3. Re-evaluation on the full 19-point grid + updated checkpoint
+
+- `uncertainty_eval/dense_grid_extended_zfix/run_conv_epinet_extended.py` —
+  **full re-run of `conv_epinet`** (all 19 branch lengths, not just the 3
+  new ones, since the checkpoint itself changed) under `epinet_zfix`, plus a
+  fresh `base`/`base_scaled` forward pass over the same 19-point grid
+  (temperature refit identically to
+  `uq_metrics_followup/dnabert_only/dnabert_base_and_scaled.py`'s procedure;
+  T=1.1496, matching that prior fit exactly, as expected for a deterministic
+  fit on the same checkpoint/data/seed).
+- `run_other_methods_extended.py` — the other 8 method-configurations
+  (`mc_dropout`, `evidential`, `laplace`, `ensemble_k5`, `ensemble_k3`,
+  `cnn_mc_dropout`, `cnn_ensemble`, `rf_kmer`) computed **only at the 3 new
+  branch lengths** (none of them touch `nn_proj.models.epinet`, so their
+  existing 16-point numbers are reused unchanged) and merged with the
+  existing 16-point rows.
+- `build_combined_and_summarize.py` — assembles the full 19-point,
+  9-method `per_example_uncertainty_19pt.csv` (68,400 rows) and recomputes
+  dose-response / Spearman / endpoint-MWU / shape-characterization tables
+  over it. See `results_summary.md` in that directory for the full tables.
+
+### 4. Does retraining change `conv_epinet`'s conclusions? (headline answer)
+
+**Practical impact: magnitude changed substantially, direction/shape
+conclusion did not — with one instructive exception once the grid is
+extended far enough.** See
+`data_gen/uq_metrics_followup/epinet_retrain_zfix/conv_epinet_old_vs_new_alisim.csv`
+for the full numbers; key points:
+
+| | OLD checkpoint, 16pt grid | NEW (`epinet_zfix`), same 16pt window | NEW, full 19pt grid |
+|---|---:|---:|---:|
+| baseline `U_epistemic` (t=0) | 0.0644 | 0.0202 (≈3.2× smaller) | 0.0202 |
+| `U_epistemic` at t=3.0 | 0.0920 | 0.0317 (≈2.9× smaller) | 0.0317 (now the PEAK, not the endpoint) |
+| Spearman rho (`U_epistemic` vs. branch_length) | 0.122 | — | 0.168 |
+| shape classification | still rising, no interior peak | still rising, no interior peak (identical to OLD on the same window) | **declines after peaking** |
+| accuracy by branch_length | 0.88 → 0.54 | (base frozen, identical to OLD by construction) | 0.88 → 0.54 → 0.55 |
+
+- **On an apples-to-apples 16-point comparison, the qualitative shape
+  conclusion is unchanged**: both checkpoints show a weak, roughly
+  monotonic rise from t=0 to t=3.0 with no interior peak, both statistically
+  significant, similar-order Spearman rho (0.12 vs. an implied ~0.15 on the
+  matching window). The retrained checkpoint's raw `U_epistemic` values are
+  consistently smaller in absolute magnitude (roughly a third) than the
+  stale checkpoint's — plausibly because the stale checkpoint's
+  batch-shared-`z` training produced a head whose eval-time per-example
+  outputs happen to spread out more, an artifact of the train/inference
+  mismatch rather than a more genuine epistemic signal — but this does not
+  flip any conclusion drawn from the original tables about *direction* or
+  *statistical significance*.
+- **Extending the grid, not the retrain, is what changes the shape
+  classification**: once genuine further divergence (t=5.0-12.0) is added,
+  the retrained checkpoint's `U_epistemic` **peaks at t=3.0 and declines
+  10.3% by t=12.0** — the same "rise then decline" pattern already seen for
+  `mc_dropout`/`evidential`/both ensembles in the original 16-point run,
+  rather than the outlier "still rising" pattern `conv_epinet` appeared to
+  have when the grid stopped at t=3.0. This means the original "still
+  rising, no peak" framing for `conv_epinet` was an artifact of an
+  insufficiently-extended axis, not a real qualitative difference from the
+  rest of the roster — **once evaluated far enough, `conv_epinet` behaves
+  like every other decomposition-based method here.**
+- **On the boundary dataset** (see `data_gen/aleatoric_boundary/README.md`'s
+  own retrain section), the conclusion is even more stable: `conv_epinet`'s
+  epistemic-conflates-with-aleatoric-near-a-decision-boundary finding not
+  only survives the retrain, the Q1/Q4 ratio is *larger* under the new
+  checkpoint (26.8× vs. 17.8×) even though absolute magnitudes again shrink
+  (~2.4×).
+- **Bottom line**: retraining under the fix was worth doing (the prior
+  checkpoint's provenance was genuinely wrong, and the practice of citing a
+  monkeypatched-at-eval-time checkpoint's numbers as validating the fix was
+  not sound methodology), but it does not overturn this session's or the
+  manuscript's headline claim that no method here cleanly separates
+  epistemic from aleatoric uncertainty — if anything, the corrected checkpoint
+  now conforms *more* closely to the roster-wide pattern (rise-then-decline,
+  smaller absolute magnitude) rather than standing out as an exception.
+
+### 5. Shape characterization for all 9 decomposable methods, extended grid
+
+Peak location + peak-to-baseline / peak-to-endpoint magnitude (not just
+Spearman rho, which — per the critique's Finding 3.3 — can read as
+"essentially no relationship" for a real, large, non-monotonic hump, e.g.
+`mc_dropout`'s genuine 58% rise-then-fall nets to rho≈0.035 on the original
+grid) for every method, now computed on the full 19-point grid:
+
+| method | shape (19pt) | peak branch_length | pct rise to peak | pct decline peak→12.0 |
+|---|---|---:|---:|---:|
+| conv_epinet | declines after peaking | 3.0 | +57.1% | -10.3% |
+| mc_dropout | declines after peaking | 0.2 | +57.7% | -41.3% |
+| evidential | declines after peaking | 0.4 | +13.0% | -22.6% |
+| laplace | declines after peaking | 3.0 | +40.1% | -5.1% |
+| ensemble_k5 | declines after peaking | 0.6 | +101.3% | -35.4% |
+| ensemble_k3 | declines after peaking | 0.4 | +73.7% | -31.6% |
+| cnn_mc_dropout | declines after peaking | 5.0 | +118.5% | -8.1% |
+| cnn_ensemble | declines after peaking | 1.0 | +83.5% | -6.7% |
+| rf_kmer | **plateaus near peak (within 3%)** | 5.0 | +89.8% | -2.7% |
+
+**Every DNABERT2-based/CNN method now shows the same qualitative shape
+(rise then decline) once evaluated far enough** — the 3-way shape split
+seen on the original 16-point grid (still-rising / plateau / decline) was
+an artifact of stopping the axis too early for `conv_epinet` and `laplace`
+specifically; both now show the same hump shape as the rest once t>3.0 is
+included. **`rf_kmer` is the one genuine exception**: it peaks around t=5.0
+and then plateaus (declines <3% through t=12.0) rather than dropping back
+down — its non-pretrained, k-mer-count-based epistemic signal keeps
+tracking compositional novelty out to the edge of this axis instead of
+reverting toward baseline, unlike every DNABERT2-derived method. This
+directly answers the "does RF's epistemic signal eventually peak/plateau"
+question: **yes, it plateaus — it does not keep climbing indefinitely — but
+it is the only method whose signal doesn't substantially reverse once
+saturation is approached.**
+
+Full tables: `uncertainty_eval/dense_grid_extended_zfix/results_summary.md`,
+`results_summary_shape.csv`, `results_summary_spearman.csv`,
+`results_summary_dose_response.csv`, `results_summary_mwu_endpoints.csv`.
+Updated ECE/NLL/Brier (pooled + stratified by branch_length, all 11
+methods including `base`/`base_scaled`) are in
+`data_gen/uq_metrics_followup/dnabert_only/pooled_ece_allmethods_extended_zfix.csv`
+and `stratified_ece_allmethods_extended_zfix.csv`.
