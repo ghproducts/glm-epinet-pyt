@@ -1,0 +1,4 @@
+dataset,checkpoint,grid,baseline_U_epi_t0,U_epi_t3.0,rho_U_epistemic,rho_U_aleatoric,shape,peak_branch_length
+promoter_alisim,"OLD (stale, pre-fix trained; eval-time monkeypatch only)",16pt (0-3.0),0.06435209430143,0.0920409385295351,0.1219752962116259,0.1430446494298671,still rising at largest branch_length (no interior peak),3.0
+promoter_alisim,"NEW (epinet_zfix, trained under fix from the start)","16pt subset (0-3.0), apples-to-apples vs OLD row above",0.0201577003487909,0.0316715088386262,,,still rising at largest branch_length (no interior peak) [16pt only],3.0
+promoter_alisim,"NEW (epinet_zfix, trained under fix from the start)","FULL 19pt (0-12.0), extended",0.0201577003487909,0.0316715088386262,0.1681001832219665,0.177647595575919,declines after peaking,3.0
