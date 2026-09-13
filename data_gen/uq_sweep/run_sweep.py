@@ -147,7 +147,9 @@ def m_conv_epinet(bb, ds, seed, args):
     checkpoints (`epinet`) are refused rather than silently used: they were
     trained under batch-shared z, so evaluating them with fixed code measures
     neither the old nor the new pipeline."""
-    from nn_proj.models.epinet.epinet import EpinetConfig, EpinetWrapper, HFEpinetSeqClassifier
+    from nn_proj.models.epinet.epinet import (
+        EpinetConfig, EpinetWrapper, HFEpinetSeqClassifier, MLPEpinetWithConvPrior,
+    )
     kind = args.epinet_kind
     ckpt = S.ckpt_path(bb.name, seed, kind)
     if kind == "epinet":
@@ -155,28 +157,43 @@ def m_conv_epinet(bb, ds, seed, args):
             "refusing pre-z-fix 'epinet' checkpoints; retrain as 'epinet_zfix' "
             "or pass --epinet-kind explicitly if you really mean the old weights"
         )
-    base = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
+    base_ckpt = S.ckpt_path(bb.name, seed, "base")
+    config = S.load_config(bb, ckpt_dir=base_ckpt)
+    base = S.load_finetuned(bb, base_ckpt, config=config)
     for p in base.parameters():
         p.requires_grad = False
-    cfg_path = os.path.join(ckpt, "epinet_config.json")
-    cfg_kwargs = json.load(open(cfg_path)) if os.path.exists(cfg_path) else {}
-    wrapper = EpinetWrapper(base, S.get_feature_fn(bb), EpinetConfig(**cfg_kwargs))
-    model = HFEpinetSeqClassifier(wrapper).to(S.DEVICE)
-    # epinet internals are lazily built on first forward
-    loader = ds.loader(BATCH_SIZE)
-    first = next(iter(loader))
-    first.pop("labels" if "labels" in first else "label")
+    # Must match how train_epinet.py built it: the conv-prior variant over raw
+    # tokens (include_inputs=True + vocab_size), not the plain MLP prior.
+    epi_cfg = EpinetConfig(num_classes=2, include_inputs=True,
+                           vocab_size=config.vocab_size)
+    wrapper = EpinetWrapper(base, S.get_feature_fn(bb), epi_cfg,
+                            epinet=MLPEpinetWithConvPrior)
+    model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=K_EPINET).to(S.DEVICE)
+
+    # epinet internals are built lazily on first forward, so the parameters
+    # don't exist to load into until one pass has run
+    dummy = ds.collator([ds.collate_ds[i] for i in range(2)])
+    dummy = {k: v.to(S.DEVICE) for k, v in dummy.items() if k not in ("labels", "label")}
     with torch.no_grad():
-        model(**{k: v.to(S.DEVICE) for k, v in first.items()})
-    missing, unexpected = model.load_state_dict(
-        S.load_checkpoint_weights(ckpt), strict=False)
+        model.wrapper(dummy, n_index_samples=1)
+    missing, unexpected = model.load_state_dict(S.load_checkpoint_weights(ckpt), strict=False)
     if missing or unexpected:
         raise RuntimeError(f"epinet state_dict mismatch: missing={list(missing)[:5]} "
                            f"unexpected={list(unexpected)[:5]}")
     model.eval()
-    stacks, labels = _stacked_logits_pass(model, ds, K_EPINET, resample_each=True)
+
+    # K index samples in one wrapper call (return_all=True gives [K,B,C]);
+    # calling the model K times would redraw the base forward each time too.
+    stacks, all_labels = [], []
+    with torch.no_grad():
+        for batch in ds.loader(BATCH_SIZE):
+            key = "labels" if "labels" in batch else "label"
+            all_labels.append(batch.pop(key))
+            inputs = {k: v.to(S.DEVICE) for k, v in batch.items()}
+            stacks.append(model.wrapper(inputs, n_index_samples=K_EPINET,
+                                        return_all=True).float().cpu())
     del model, base
-    return _emit(ds, stacks, labels, "conv_epinet")
+    return _emit(ds, stacks, all_labels, "conv_epinet")
 
 
 def m_laplace(bb, ds, seed, args):
