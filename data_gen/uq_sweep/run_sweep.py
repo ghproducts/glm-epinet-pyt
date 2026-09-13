@@ -164,8 +164,15 @@ def m_conv_epinet(bb, ds, seed, args):
         p.requires_grad = False
     # Must match how train_epinet.py built it: the conv-prior variant over raw
     # tokens (include_inputs=True + vocab_size), not the plain MLP prior.
-    epi_cfg = EpinetConfig(num_classes=2, include_inputs=True,
-                           vocab_size=config.vocab_size)
+    # Prefer the config the checkpoint was actually trained under; fall back to
+    # what train_epinet.py hardcodes (conv prior over raw tokens).
+    saved_cfg = S.load_epinet_saved_config(ckpt)
+    if saved_cfg:
+        epi_cfg = EpinetConfig(**{k: v for k, v in saved_cfg.items()
+                                  if k in EpinetConfig.__dataclass_fields__})
+    else:
+        epi_cfg = EpinetConfig(num_classes=2, include_inputs=True,
+                               vocab_size=config.vocab_size)
     wrapper = EpinetWrapper(base, S.get_feature_fn(bb), epi_cfg,
                             epinet=MLPEpinetWithConvPrior)
     model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=K_EPINET).to(S.DEVICE)
