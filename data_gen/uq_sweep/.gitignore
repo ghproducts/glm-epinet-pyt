@@ -2,3 +2,4 @@
 results/
 *.log
 __pycache__/
+summaries/
