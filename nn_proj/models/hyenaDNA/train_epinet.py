@@ -138,7 +138,7 @@ def train():
             {
                 "state_dict": model.state_dict(),
                 "base_model_name": model_args.model_name_or_path,
-                "num_labels": train_dataset.features["label"].num_classes,
+                "num_labels": num_labels,  # dataset column is "labels"; features["label"] KeyErrors on local CSVs
                 "epinet_cfg": model.cfg.__dict__,   # EpinetConfig fields
                 "feature_fn": "NT_feature_fn",      # or "NT_tokens_feature_fn"
             },

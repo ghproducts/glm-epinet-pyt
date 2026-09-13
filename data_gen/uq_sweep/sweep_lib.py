@@ -107,15 +107,62 @@ def ckpt_path(backbone: str, seed: int | str, kind: str, task_dir: str = "label_
 
 
 def load_checkpoint_weights(ckpt_dir: str) -> dict:
-    """DNABERT2/CARMANIA save `model.safetensors`; hyenaDNA saves
-    `pytorch_model.bin`. Accept either."""
+    """Four save layouts exist in this repo, in preference order:
+
+    - `model.safetensors` (DNABERT2/CARMANIA base, and the first epinet_zfix)
+    - `pytorch_model.bin` (hyenaDNA base)
+    - `model_epinet.pt`   (what train_epinet.py --save_model writes: a dict
+                           with the state_dict under a "state_dict" key, plus
+                           the EpinetConfig used)
+    - `checkpoint-*/pytorch_model.bin` (HF Trainer per-epoch dirs, used as a
+                           last resort when no top-level save happened; the
+                           highest step is taken)
+    """
     st = os.path.join(ckpt_dir, "model.safetensors")
     if os.path.exists(st):
         return load_file(st)
     bin_path = os.path.join(ckpt_dir, "pytorch_model.bin")
     if os.path.exists(bin_path):
         return torch.load(bin_path, map_location="cpu", weights_only=True)
-    raise FileNotFoundError(f"no model.safetensors or pytorch_model.bin in {ckpt_dir}")
+    epi = os.path.join(ckpt_dir, "model_epinet.pt")
+    if os.path.exists(epi):
+        blob = torch.load(epi, map_location="cpu", weights_only=False)
+        return blob["state_dict"] if isinstance(blob, dict) and "state_dict" in blob else blob
+    # Trainer ran with load_best_model_at_end, so the highest-step checkpoint is
+    # NOT necessarily the best one -- read trainer_state.json rather than
+    # assuming, or we silently score non-best weights.
+    import glob
+    state_path = os.path.join(ckpt_dir, "trainer_state.json")
+    if os.path.exists(state_path):
+        import json as _json
+        best = _json.load(open(state_path)).get("best_model_checkpoint")
+        if best:
+            for cand in (os.path.join(best, "pytorch_model.bin"),
+                         os.path.join(best, "model.safetensors"),
+                         os.path.join(ckpt_dir, os.path.basename(best), "pytorch_model.bin"),
+                         os.path.join(ckpt_dir, os.path.basename(best), "model.safetensors")):
+                if os.path.exists(cand):
+                    return (load_file(cand) if cand.endswith(".safetensors")
+                            else torch.load(cand, map_location="cpu", weights_only=True))
+    inner = sorted(glob.glob(os.path.join(ckpt_dir, "checkpoint-*", "pytorch_model.bin")),
+                   key=lambda p: int(p.split("checkpoint-")[1].split(os.sep)[0]))
+    if inner:
+        return torch.load(inner[-1], map_location="cpu", weights_only=True)
+    raise FileNotFoundError(
+        f"no model.safetensors / pytorch_model.bin / model_epinet.pt / checkpoint-*/ "
+        f"weights in {ckpt_dir}"
+    )
+
+
+def load_epinet_saved_config(ckpt_dir: str) -> Optional[dict]:
+    """EpinetConfig fields recorded by train_epinet.py --save_model, so the
+    wrapper is rebuilt with the config it was trained under rather than
+    re-derived defaults."""
+    epi = os.path.join(ckpt_dir, "model_epinet.pt")
+    if not os.path.exists(epi):
+        return None
+    blob = torch.load(epi, map_location="cpu", weights_only=False)
+    return blob.get("epinet_cfg") if isinstance(blob, dict) else None
 
 
 def load_config(bb: Backbone, num_labels: int = 2, ckpt_dir: Optional[str] = None):
