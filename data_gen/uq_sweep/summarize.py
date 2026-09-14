@@ -23,10 +23,14 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sweep_lib import normalize_axis_cols  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = os.path.join(HERE, "results")
@@ -114,6 +118,9 @@ def load_cells(datasets: list[str]) -> pd.DataFrame:
         if dataset not in datasets:
             continue
         df = pd.read_csv(path)
+        # float32-vs-float64 provenance differs between the GLM and baseline
+        # writers, so normalize before any groupby on a continuous axis
+        df = normalize_axis_cols(df)
         if "correct" not in df.columns or not _prob_cols(df):
             print(f"[skip] {path}: missing correct/prob columns")
             continue
