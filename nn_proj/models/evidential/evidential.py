@@ -148,7 +148,13 @@ class HFEvidentialSeqClassifier(nn.Module):
         return self.wrapper.cfg
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        batch = {"input_ids": input_ids, "attention_mask": attention_mask, **kwargs}
+        # Only include attention_mask when there is one: hyenaDNA's tokenizer
+        # reports model_input_names == ["input_ids"], so callers pass None, and
+        # HyenaDNAForSequenceClassification.forward() has no attention_mask
+        # parameter -- inserting the key unconditionally is a TypeError there.
+        batch = {"input_ids": input_ids, **kwargs}
+        if attention_mask is not None:
+            batch["attention_mask"] = attention_mask
         evidence = self.wrapper(batch)
         return {"loss": None, "logits": evidence}
 
