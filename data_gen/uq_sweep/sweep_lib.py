@@ -362,8 +362,24 @@ def cell_path(dataset: str, backbone: str, method: str, seed: int | str) -> str:
     return os.path.join(d, f"{method}__seed{seed}.csv")
 
 
+#: metadata columns that are continuous axis values and must compare exactly
+#: across cells. The GLM path reads them through an HF dataset (float32) while
+#: the non-pretrained baselines read the CSV with pandas (float64), so e.g.
+#: branch_length 0.01 becomes 0.0099999997764825 in one and 0.01 in the other
+#: and a groupby silently splits one stratum into two half-empty ones.
+AXIS_ROUND_COLS = ("branch_length", "realized_identity_to_anchor", "margin")
+AXIS_ROUND_DP = 6
+
+
+def normalize_axis_cols(df: pd.DataFrame) -> pd.DataFrame:
+    for c in AXIS_ROUND_COLS:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").round(AXIS_ROUND_DP)
+    return df
+
+
 def write_cell(rows: list[dict], dataset: str, backbone: str, method: str, seed: int | str) -> str:
-    df = pd.DataFrame(rows)
+    df = normalize_axis_cols(pd.DataFrame(rows))
     df.insert(0, "backbone", backbone)
     df.insert(1, "dataset", dataset)
     df.insert(2, "seed", str(seed))
