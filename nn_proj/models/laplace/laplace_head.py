@@ -53,6 +53,24 @@ class LaplaceConfig:
     max_examples: Optional[int] = None   # cap the fitting pass for speed; see fit_diagonal_laplace
 
 
+def pool_index(input_ids, pad_id, seq_len: int, device, batch_size: int) -> torch.Tensor:
+    """Which sequence position a GPT-style classifier head pools from.
+
+    Mirrors HF's causal sequence-classification rule
+    (`(input_ids == pad_id).argmax(-1) - 1`, i.e. the last non-pad token),
+    falling back to the final position when there is no pad id or no padding.
+    Shared by the fitting pass and the sampler so both use the same position;
+    using different ones would fit a posterior over features the head never
+    consumes.
+    """
+    if input_ids is None or pad_id is None:
+        return torch.full((batch_size,), seq_len - 1, dtype=torch.long, device=device)
+    is_pad = torch.eq(input_ids, pad_id).long()
+    idx = is_pad.argmax(-1) - 1
+    idx = torch.where(is_pad.sum(-1) == 0, torch.full_like(idx, seq_len - 1), idx)
+    return idx.clamp(0, seq_len - 1).to(device)
+
+
 @torch.no_grad()
 def fit_diagonal_ggn(
     model: nn.Module,
@@ -110,7 +128,15 @@ def fit_diagonal_ggn(
             out = model(**batch)
             logits = out.logits if hasattr(out, "logits") else out["logits"]
             probs = F.softmax(logits.float(), dim=-1)  # [B,C]
-            h = captured["h"].float()                   # [B,H]
+            h = captured["h"].float()                   # [B,H], or [B,L,H]
+            if h.dim() == 3:
+                # Per-position head (hyenaDNA): the model pools by taking the
+                # last non-pad token, so fit the posterior on that position's
+                # features only -- averaging over all positions would fit a
+                # different quantity than the one the head actually consumes.
+                pad_id = getattr(getattr(model, "config", None), "pad_token_id", None)
+                idx = pool_index(batch.get("input_ids"), pad_id, h.shape[1], h.device, h.shape[0])
+                h = h[torch.arange(h.shape[0], device=h.device), idx]
             pq = probs * (1.0 - probs)                   # [B,C]
 
             weight_ggn += torch.einsum("bc,bh->ch", pq, h ** 2)
@@ -264,20 +290,60 @@ class LaplaceSeqClassifier(nn.Module):
             raise ValueError(f"base_model.{classifier_attr} is a {type(classifier)}, expected nn.Linear.")
 
         self.register_buffer("weight_mean", classifier.weight.detach().clone())
-        self.register_buffer("bias_mean", classifier.bias.detach().clone())
+        # Some heads are biasless (hyenaDNA: nn.Linear(d_model, n, bias=False)),
+        # so there is no bias to place a posterior over -- carry zeros with zero
+        # variance rather than crashing on None.
+        self.has_bias = classifier.bias is not None
+        n_out = classifier.weight.shape[0]
+        self.register_buffer(
+            "bias_mean",
+            classifier.bias.detach().clone() if self.has_bias
+            else torch.zeros(n_out, device=classifier.weight.device),
+        )
         self.register_buffer("weight_std", weight_var.clamp_min(0).sqrt().to(classifier.weight.device))
-        self.register_buffer("bias_std", bias_var.clamp_min(0).sqrt().to(classifier.weight.device))
+        self.register_buffer(
+            "bias_std",
+            bias_var.clamp_min(0).sqrt().to(classifier.weight.device) if self.has_bias
+            else torch.zeros(n_out, device=classifier.weight.device),
+        )
 
         self._features: Optional[torch.Tensor] = None
+        self._select_idx: Optional[torch.Tensor] = None
         classifier.register_forward_hook(self._capture_hook)
 
     def _capture_hook(self, _module, inputs, _output):
         self._features = inputs[0].detach()
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        out = self.base(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+        # Only forward the args the backbone actually accepts: hyenaDNA is a
+        # causal conv model whose forward() has no attention_mask parameter, so
+        # passing it unconditionally is a TypeError.
+        call = dict(kwargs)
+        if input_ids is not None:
+            call["input_ids"] = input_ids
+        if attention_mask is not None:
+            call["attention_mask"] = attention_mask
+        try:
+            out = self.base(**call)
+        except TypeError:
+            call.pop("attention_mask", None)
+            out = self.base(**call)
+        # GPT-style classifiers (hyenaDNA) apply the head at *every* position and
+        # then pool by taking the last non-pad token, so the hook captures
+        # [B, L, H]. Record which position the model itself selected, so the
+        # posterior is sampled at exactly that position rather than over the
+        # whole sequence.
+        if self._features is not None and self._features.dim() == 3:
+            self._select_idx = self._last_non_pad_index(input_ids, self._features.shape[1])
+        else:
+            self._select_idx = None
         loss = F.cross_entropy(out.logits, labels) if labels is not None else None
         return {"loss": loss, "logits": out.logits}
+
+    def _last_non_pad_index(self, input_ids, seq_len: int) -> torch.Tensor:
+        pad_id = getattr(getattr(self.base, "config", None), "pad_token_id", None)
+        return pool_index(input_ids, pad_id, seq_len, self._features.device,
+                          self._features.shape[0])
 
     @torch.no_grad()
     def sample_logits(self, n_samples: int = 1) -> torch.Tensor:
@@ -286,7 +352,14 @@ class LaplaceSeqClassifier(nn.Module):
         `forward()` first)."""
         if self._features is None:
             raise RuntimeError("sample_logits() needs a prior forward() call to populate cached features.")
-        feat = self._features.float()  # [B, H]
+        feat = self._features.float()  # [B, H], or [B, L, H] for per-position heads
+        if feat.dim() == 3:
+            if self._select_idx is None:
+                raise RuntimeError(
+                    "captured 3-D features but no pooling index was recorded; "
+                    "call forward() (not the bare base model) before sample_logits()"
+                )
+            feat = feat[torch.arange(feat.shape[0], device=feat.device), self._select_idx]
         C, H = self.weight_mean.shape
         eps_w = torch.randn(n_samples, C, H, device=feat.device, dtype=feat.dtype)
         eps_b = torch.randn(n_samples, C, device=feat.device, dtype=feat.dtype)

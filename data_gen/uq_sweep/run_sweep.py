@@ -21,6 +21,7 @@ dropped or substituted.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -381,7 +382,11 @@ def main():
     if args.all:
         backbones = list(S.BACKBONES)
         methods = list(METHODS)
-        datasets = ["boundary", "alisim"]
+        # alisim_extended holds ONLY the extra branch lengths (5.0/8.0/12.0);
+        # the full 19-point axis is dense + extended. Truncating at t=3.0 is
+        # what previously made conv_epinet/laplace look "still rising" when they
+        # actually peak and decline.
+        datasets = ["boundary", "alisim", "alisim_extended"]
         seeds = ["1", "2", "3"]
     else:
         backbones = [b.strip() for b in args.backbones.split(",")]
@@ -429,6 +434,18 @@ def main():
                 cache[(bname, dsname)] = S.DATASET_BUILDERS[dsname](bb, tok)
             ds = cache[(bname, dsname)]
             print(f"=== {dsname} / {bname} / {mname} / seed {eff_seed} ===", flush=True)
+            # Several methods draw stochastic samples (mc_dropout masks, epinet
+            # index vectors, Laplace weight draws). Seed them deterministically
+            # from the cell identity so a rerun reproduces the same numbers --
+            # otherwise re-running a cell moves its accuracy by ~1pp and nothing
+            # in the output says why.
+            # hashlib, not hash(): Python salts str hashing per process, so
+            # hash() would give a different seed every run.
+            cell_seed = int(hashlib.sha256(
+                f"{dsname}/{bname}/{mname}/{eff_seed}".encode()).hexdigest()[:8], 16)
+            torch.manual_seed(cell_seed)
+            if S.DEVICE == "cuda":
+                torch.cuda.manual_seed_all(cell_seed)
             rows = METHODS[mname](bb, ds, raw_seed, args)
             path = S.write_cell(rows, dsname, bname, mname, eff_seed)
             acc = sum(r["correct"] for r in rows) / len(rows)
