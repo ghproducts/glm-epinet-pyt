@@ -1,0 +1,17 @@
+comparison,U,p,method,score
+cnn_mc_dropout/bald_U_epistemic: shuffled > real,1401200.5,6.061474458358153e-09,cnn_mc_dropout,bald_U_epistemic
+cnn_mc_dropout/bald_U_epistemic: random_dna > real,1839168.0,1.6904872370072744e-114,cnn_mc_dropout,bald_U_epistemic
+cnn_mc_dropout/bald_U_aleatoric: shuffled > real,1408071.0,1.2239435794792365e-09,cnn_mc_dropout,bald_U_aleatoric
+cnn_mc_dropout/bald_U_aleatoric: random_dna > real,1858162.0,6.569295722093504e-122,cnn_mc_dropout,bald_U_aleatoric
+cnn_mc_dropout/var_U_epistemic: shuffled > real,1402143.0,4.887055059321161e-09,cnn_mc_dropout,var_U_epistemic
+cnn_mc_dropout/var_U_epistemic: random_dna > real,1851044.0,4.1903711587053936e-119,cnn_mc_dropout,var_U_epistemic
+cnn_mc_dropout/var_U_aleatoric: shuffled > real,1407608.0,1.3662582964603118e-09,cnn_mc_dropout,var_U_aleatoric
+cnn_mc_dropout/var_U_aleatoric: random_dna > real,1859002.0,3.0503069432687396e-122,cnn_mc_dropout,var_U_aleatoric
+cnn_ensemble/bald_U_epistemic: shuffled > real,1380197.0,5.249869793143186e-07,cnn_ensemble,bald_U_epistemic
+cnn_ensemble/bald_U_epistemic: random_dna > real,1760578.0,2.4081651727683167e-86,cnn_ensemble,bald_U_epistemic
+cnn_ensemble/bald_U_aleatoric: shuffled > real,1375406.0,1.3271097903685967e-06,cnn_ensemble,bald_U_aleatoric
+cnn_ensemble/bald_U_aleatoric: random_dna > real,1786597.0,3.221368000986829e-95,cnn_ensemble,bald_U_aleatoric
+cnn_ensemble/var_U_epistemic: shuffled > real,1379617.0,5.88408756164998e-07,cnn_ensemble,var_U_epistemic
+cnn_ensemble/var_U_epistemic: random_dna > real,1774122.0,6.573742793135823e-91,cnn_ensemble,var_U_epistemic
+cnn_ensemble/var_U_aleatoric: shuffled > real,1375776.0,1.2368574954755074e-06,cnn_ensemble,var_U_aleatoric
+cnn_ensemble/var_U_aleatoric: random_dna > real,1782527.0,8.419740670146753e-94,cnn_ensemble,var_U_aleatoric

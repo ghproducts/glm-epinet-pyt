@@ -174,6 +174,141 @@ datasets:
           Reviewer 1 point 1 in .docs/REVISION_PLAN.md.
 
   # =======================================================================
+  # Promoter motif composition, v2
+  # Same source and story as promoter_motifs above; fixes two confounds
+  # found in it (class-balance shift and single-motif-count concentration
+  # in test_OOD -- see .docs/REVISION_PLAN.md and
+  # data_gen/promoter_motifs/make_splits_v2.py). Prefer this over
+  # promoter_motifs above for any new analysis; v1 stays registered for
+  # provenance/comparison, not because it's still the recommended dataset.
+  # =======================================================================
+
+  - train: promoter_motifs_v2
+    target: promoter presence (binary)
+    label_space: [0, 1]
+    tests:
+      - test: test_ID
+        category: ID
+        target_shift: false
+        held_out: held-out split of the same task
+        supports: [calibration, novelty]
+      - test: test_matched_ID
+        category: ID
+        target_shift: false
+        held_out: >
+          nothing; resampled from test_ID to match test_OOD's per-label
+          motif-*count* distribution. Not a shift condition -- isolates
+          "novel combination" from "more motifs than usual".
+        supports: [calibration, novelty]
+        note: >
+          338 of these 1,299 rows are unique sequences (up to 36x
+          repetition) -- better than v1's 122/1,569 but still resampled;
+          see data_gen/promoter_motifs/make_splits_v2.py, verify().
+      - test: test_OOD
+        category: Near-ID
+        target_shift: false
+        held_out: >
+          five motif combinations absent from training (EGR1+SP2,
+          SP2+TFDP1, SP2+ZNF131, ZBED4+ZNF131, and standalone TFDP1);
+          every test label was seen in training, the specific combinations
+          carrying it were not
+        supports: [calibration, novelty]
+        note: >
+          Near-ID under this registry's held-out-variable rule, same
+          reasoning as v1's test_OOD (see its note above). Unlike v1, this
+          set's label balance is corrected to match train+test_ID's
+          (pos_frac 0.388 in both, by construction) and it spans two
+          motif-count strata (1 and 2) instead of one -- see
+          .docs/REVISION_PLAN.md for why that matters and
+          .docs/PROMOTER_MOTIFS_RESULTS.md for the v1 numbers this fixes.
+
+  # =======================================================================
+  # Promoter motif composition, v3
+  # Adds a second, qualitatively different shift condition alongside v2's:
+  # a motif the model has never seen in *any* context (test_nearOOD, built
+  # from ELK3 -- the one motif that never co-occurs with anything else in
+  # this corpus, so it's the only one removable without also removing other
+  # eligible combinations from training), against v2's existing "novel
+  # combination of individually-seen motifs" condition (test_nearID, same
+  # five combinations as v2's test_OOD). Two separate matched-ID controls,
+  # not one shared one -- test_nearID and test_nearOOD sit at different
+  # motif-count strata, and a single shared control would match neither
+  # exactly. See data_gen/promoter_motifs/make_splits_v3.py and
+  # .docs/REVISION_PLAN.md.
+  # =======================================================================
+
+  - train: promoter_motifs_v3
+    target: promoter presence (binary)
+    label_space: [0, 1]
+    tests:
+      - test: test_ID
+        category: ID
+        target_shift: false
+        held_out: held-out split of the same task
+        supports: [calibration, novelty]
+        note: >
+          General-population baseline. Not the comparison anchor for either
+          shift condition below -- see test_matched_ID_nearID/nearOOD.
+      - test: test_matched_ID_nearID
+        category: ID
+        target_shift: false
+        held_out: >
+          nothing; resampled from test_ID to match test_nearID's per-label
+          motif-count distribution (spans counts 1 and 2). Matched control
+          isolating "novel combination" as the only variable.
+        supports: [calibration, novelty]
+        note: >
+          366 of these 1,287 rows are unique sequences (up to 24x
+          repetition) -- the count-2 stratum is still bottlenecked on the
+          single eligible pair SP2+ZBED4, same limitation v2's
+          test_matched_ID had.
+      - test: test_matched_ID_nearOOD
+        category: ID
+        target_shift: false
+        held_out: >
+          nothing; resampled from test_ID to match test_nearOOD's per-label
+          motif-count distribution (count 1 only). Matched control isolating
+          "novel motif" as the only variable.
+        supports: [calibration, novelty]
+        note: >
+          All 170 rows are unique sequences -- no resampling needed, since
+          the count-1 matching pool (4 remaining eligible single motifs) is
+          rich. A cleaner control than test_matched_ID_nearID.
+      - test: test_nearID
+        category: Near-ID
+        target_shift: false
+        held_out: >
+          five motif combinations absent from training (EGR1+SP2,
+          SP2+TFDP1, SP2+ZNF131, ZBED4+ZNF131, and standalone TFDP1); every
+          motif was individually seen elsewhere in training, this specific
+          co-occurrence was not
+        supports: [calibration, novelty]
+        note: >
+          Identical held-out set to v2's test_OOD; renamed here for
+          symmetry with test_nearOOD now that both shift conditions are
+          registered on the same training task. Compare against
+          test_matched_ID_nearID, not plain test_ID.
+      - test: test_nearOOD
+        category: Near-ID
+        target_shift: false
+        held_out: >
+          the motif ELK3 entirely -- never seen alone or in any combination
+          during training, not just this particular co-occurrence
+        supports: [calibration, novelty]
+        note: >
+          Labelled Near-OOD in its directory name for the qualitative
+          story (an entirely unseen building block, not just an unseen
+          pairing of familiar ones), but categorized Near-ID here under the
+          same strict held-out-variable-rank reading applied to test_nearID
+          and to v1/v2's test_OOD: the target and label space are
+          unchanged, and only a unit below the label rank is novel. Only
+          170 rows (n_eff also 170, no resampling) -- ELK3 is a small
+          motif in this corpus; treat comparisons against it as lower
+          statistical power than test_nearID's, not just a further point on
+          the same axis. Compare against test_matched_ID_nearOOD, not plain
+          test_ID or test_matched_ID_nearID (different motif-count profile).
+
+  # =======================================================================
   # Metagenomic gene classification
   # Source: MsAlEhR/scorpio-gene-taxa
   # =======================================================================
@@ -254,6 +389,8 @@ ood_anchors:
   gene_taxa: test
   pbsim: id_novel_genus
   promoter_motifs: test_ID
+  promoter_motifs_v2: test_ID
+  promoter_motifs_v3: test_ID
 
 # ---------------------------------------------------------------------------
 # Uncertainty methods

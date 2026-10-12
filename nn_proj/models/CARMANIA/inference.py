@@ -9,9 +9,10 @@ import torch.nn as nn
 from transformers import set_seed
 from safetensors.torch import load_file
 from nn_proj.common.datasets import load_local_dataset, load_NT_tasks, prep_for_trainer
+from nn_proj.common.utils import enable_mc_dropout
 from nn_proj.models.epinet import EpinetConfig, EpinetWrapper, HFEpinetSeqClassifier, MLPEpinetWithConvPrior, MLPEpinetWithPrior, predict
 from nn_proj.models.epinet.feature_fns import NT_feature_fn
-from .config import ModelArguments, DataArguments, TrainingArguments    
+from .config import ModelArguments, DataArguments, TrainingArguments
 from .model import CarmaniaForSequenceClassification, CarmaniaSequenceClassificationConfig
 
 
@@ -19,18 +20,6 @@ from .model import CarmaniaForSequenceClassification, CarmaniaSequenceClassifica
 # can use either epinet, MC-dropout, or base model only
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-def _enable_dropout(module: torch.nn.Module):
-    """Enable dropout modules in-place (used for MC-dropout)."""
-    if isinstance(module, (torch.nn.Dropout, torch.nn.AlphaDropout, torch.nn.FeatureAlphaDropout)):
-        module.train()
-    for child in module.children():
-        _enable_dropout(child)
-
-def enable_mc_dropout(model: torch.nn.Module):
-    """Put dropout layers in train mode while leaving the rest eval."""
-    model.eval()
-    _enable_dropout(model)
 
 def evaluate():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
@@ -78,7 +67,13 @@ def evaluate():
         )
 
     num_labels = data_args.num_labels if data_args.num_labels is not None else task_dataset.features["label"].num_classes
-    task_dataset, data_collator = prep_for_trainer(task_dataset, tokenizer)
+    # Whatever the source CSV carries beyond sequence/label(s) -- e.g.
+    # sequence_id/motif_combo/num_selected_motifs for promoter_motifs,
+    # taxid/split for pbsim -- is real metadata, not a model input. Passing
+    # it through here (and to predict() below) is what actually lands it in
+    # the output CSV; see docs/MODEL_CODE_FIXES.md item 2.3.
+    metadata_cols = [c for c in task_dataset.column_names if c not in ("sequence", "label", "labels")]
+    task_dataset, data_collator = prep_for_trainer(task_dataset, tokenizer, metadata_cols=metadata_cols)
 
     num_labels = config.num_labels if hasattr(config, "num_labels") else num_labels
     
@@ -112,7 +107,7 @@ def evaluate():
             dummy = {k: v.to(DEVICE) for k, v in dummy.items()}
             _ = model(**dummy)  # builds epinet internals
     elif model_args.uncertainty_method == "mc_dropout":
-        enable_mc_dropout(model)
+        enable_mc_dropout(model, p=0.1)
         model.to(DEVICE)
     else:
         model.to(DEVICE) 
@@ -138,6 +133,7 @@ def evaluate():
         uncertainty_method=model_args.uncertainty_method,
         outfile=outfile,
         temperature=model_args.temperature,
+        metadata_cols=metadata_cols,
     )
 
 

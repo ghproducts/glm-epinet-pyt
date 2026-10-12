@@ -48,6 +48,7 @@ class TrainingArguments(transformers.TrainingArguments):
     save_total_limit: int = field(default=3)
     load_best_model_at_end: bool = field(default=True)
     output_dir: str = field(default="output")
+    early_stopping_patience: int = field(default=0, metadata={"help": "Stop after this many evaluations without eval-loss improvement (0 = off)."})
     find_unused_parameters: bool = field(default=False)
     checkpointing: bool = field(default=False)
     dataloader_pin_memory: bool = field(default=False)

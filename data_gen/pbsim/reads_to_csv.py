@@ -18,6 +18,14 @@ scripts, so this file does not need regenerating per rank.
 Reads are subsampled per species with reservoir sampling so that abundant
 genomes do not dominate. Sampling is seeded and the counts are recorded in the
 run summary.
+
+Besides the four taxonomic splits this also writes ``reads_id_test.csv``: a
+read-level holdout from the *training* species, i.e. the same organisms the
+model trains on but reads it never saw. It is the only genuinely
+in-distribution evaluation set -- every taxonomic split holds out taxa, so even
+``id_novel_genus`` is made of unseen organisms. Without it, an OOD experiment
+ends up comparing novel organisms against other novel organisms. Disable with
+``--id-test-per-species 0``.
 """
 
 from __future__ import annotations
@@ -34,6 +42,15 @@ import pandas as pd
 
 SPLITS = ["train", "id_novel_genus", "ood_novel_family", "ood_nonbacterial"]
 
+# `id_test` is not a species split -- it is a READ-level holdout carved out of
+# the `train` split's own species, so it is the only evaluation set that is
+# genuinely in-distribution. Every other evaluation split holds out taxa, so
+# even `id_novel_genus` consists of organisms the model has never seen, which
+# makes it unsuitable as the in-distribution reference for OOD experiments.
+# Reads are partitioned per species before either file is written, so a read
+# can never appear in both.
+ID_TEST_SPLIT = "id_test"
+
 # Reads kept per species. Training gets more because it must cover the label
 # space; the evaluation splits only need enough reads for a stable estimate.
 DEFAULT_READS_PER_SPECIES = {
@@ -42,6 +59,9 @@ DEFAULT_READS_PER_SPECIES = {
     "ood_novel_family": 10,
     "ood_nonbacterial": 10,
 }
+
+# Held out per training species, on top of that species' train target.
+DEFAULT_ID_TEST_PER_SPECIES = 10
 
 NON_ACGT = re.compile(r"[^ATCG]")
 
@@ -112,6 +132,10 @@ def main() -> None:
     ap.add_argument("--reads-per-species", type=int, default=None,
                     help="Override the per-split defaults with a single value "
                          "(omit for train=100, evaluation splits=10)")
+    ap.add_argument("--id-test-per-species", type=int, default=DEFAULT_ID_TEST_PER_SPECIES,
+                    help="Reads per TRAINING species held out into reads_id_test.csv, the "
+                         "in-distribution evaluation set (0 disables). Sampled together with "
+                         "the training reads and partitioned, so the two never share a read.")
     ap.add_argument("--no-combined", action="store_true",
                     help="Skip the combined reads_all_splits.csv (it is large)")
     args = ap.parse_args()
@@ -136,10 +160,19 @@ def main() -> None:
 
         target = (args.reads_per_species if args.reads_per_species is not None
                   else DEFAULT_READS_PER_SPECIES.get(split))
+        # Only the training split spawns an in-distribution holdout.
+        n_holdout = args.id_test_per_species if split == "train" else 0
+        draw = target + n_holdout if target is not None else None
         out_path = args.outdir / f"reads_{split}.csv"
         print(f"\n{split}: target {target} reads/species -> {out_path}")
+        if n_holdout:
+            id_test_path = args.outdir / f"reads_{ID_TEST_SPLIT}.csv"
+            id_test_file = id_test_path.open("w", newline="")
+            id_test = csv.writer(id_test_file)
+            id_test.writerow(["label", "sequence", "taxid", "split"])
+            print(f"{ID_TEST_SPLIT}: holding out {n_holdout} reads/species -> {id_test_path}")
 
-        n_species = n_reads = n_unmapped = 0
+        n_species = n_reads = n_unmapped = n_held = 0
         with out_path.open("w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["label", "sequence", "taxid", "split"])
@@ -157,14 +190,26 @@ def main() -> None:
                 if label == -1:
                     n_unmapped += 1
 
-                seqs = sample_reads(fastqs, target, rng)
+                seqs = sample_reads(fastqs, draw, rng)
+                # Partition this species' reads before writing, so the same
+                # read can never reach both files.
+                held = []
+                if n_holdout:
+                    rng.shuffle(seqs)
+                    held, seqs = seqs[:n_holdout], seqs[n_holdout:]
+
                 for seq in seqs:
                     writer.writerow([label, seq, species, split])
                     if combined:
                         combined.writerow([label, seq, species, split])
+                for seq in held:
+                    id_test.writerow([label, seq, species, ID_TEST_SPLIT])
+                    if combined:
+                        combined.writerow([label, seq, species, ID_TEST_SPLIT])
 
                 n_species += 1
                 n_reads += len(seqs)
+                n_held += len(held)
 
         print(f"  {n_species} species, {n_reads} reads")
         if n_unmapped:
@@ -174,6 +219,11 @@ def main() -> None:
                   f"(label -1); these are dropped at load time")
         summary.append({"split": split, "species": n_species, "reads": n_reads,
                         "reads_per_species": target, "unmapped_species": n_unmapped})
+        if n_holdout:
+            id_test_file.close()
+            print(f"  {ID_TEST_SPLIT}: {n_held} reads held out from the same {n_species} species")
+            summary.append({"split": ID_TEST_SPLIT, "species": n_species, "reads": n_held,
+                            "reads_per_species": n_holdout, "unmapped_species": n_unmapped})
 
     if combined:
         combined_file.close()

@@ -24,14 +24,30 @@ def check_binary(name: str):
             "Make sure BLAST+ is installed and on your PATH."
         )
 
-def load_dataset_from_path(path: str, split: str):
+def load_dataset_from_path(path: str, split: str, encode_labels: bool = True,
+                            rank: str = None, taxa_df: str = None):
+    """Load a dataset the same way the training pipeline does.
+
+    ``encode_labels=False`` is required for a BLAST comparison: with it left
+    at the default True, ``class_encode_column`` runs independently on
+    whatever distinct label values happen to appear in the train file and
+    the test file, so train index k and test index k can denote different
+    classes (this was the cause of Table 2's mismatched-label-space
+    precision artefact -- see docs/MODEL_CODE_FIXES.md item 1.1). Passing it
+    through as False keeps labels as their raw values, which are directly
+    comparable between the two files.
+
+    ``rank``/``taxa_df`` thread through to ``load_local_dataset`` so a local
+    taxonomic dataset is compared at the same rank every other experiment
+    uses, instead of the raw per-sequence label the file happens to carry.
+    """
     if path is None:
         raise ValueError("data_path must be specified.")
     if path.startswith("InstaDeepAI/nucleotide_transformer_downstream_tasks_revised"):
         task = path.split("/")[-1]
-        return load_NT_tasks(task=task, split=split)
+        return load_NT_tasks(task=task, split=split, encode_labels=encode_labels)
     else:
-        return load_local_dataset(path=path)
+        return load_local_dataset(path=path, encode_labels=encode_labels, rank=rank, taxa_df=taxa_df)
 
 
 def write_fasta_from_dataset(ds, fasta_path: str, prefix: str) -> Dict[str, str]:
@@ -190,18 +206,36 @@ def main():
     parser.add_argument("--outdir",type=str,default="blast_eval",help="Directory to write FASTA, BLAST db, and results.",)
     parser.add_argument("--dbtype",choices=["nucl", "prot"],default="nucl",help="BLAST database type (nucl -> blastn, prot -> blastp).",)
     parser.add_argument("--threads",type=int,default=4,help="Number of BLAST threads.")
+    parser.add_argument("--taxa_rank", type=str, default=None,
+                         choices=["species", "genus", "family", "order", "class", "phylum", "kingdom"],
+                         help="For local taxonomic datasets: remap the per-sequence label to this "
+                              "rank via --taxa_df, matching the rank the models were trained/tested "
+                              "at. Leave unset for non-taxonomic datasets (e.g. NT tasks).")
+    parser.add_argument("--taxa_df", type=str, default=None,
+                         help="Lineage table for --taxa_rank; required if --taxa_rank is set.")
+    parser.add_argument("--seed", type=int, default=42,
+                         help="Seed for the held-out 10%% of the training set used as the BLAST "
+                              "reference. Pass the run's data_seed to match the split the model "
+                              "was actually trained on (default 42 matches the shell templates).")
     args = parser.parse_args()
+
+    if args.taxa_rank is not None and args.taxa_df is None:
+        parser.error("--taxa_rank requires --taxa_df")
 
     os.makedirs(args.outdir, exist_ok=True)
 
     print(f"Loading training dataset from {args.train_data_path}")
-    train_ds = load_dataset_from_path(args.train_data_path, split=args.train_split)
-    split = train_ds.train_test_split(test_size=0.1, seed=42, stratify_by_column="labels")
+    train_ds = load_dataset_from_path(args.train_data_path, split=args.train_split,
+                                       encode_labels=False, rank=args.taxa_rank, taxa_df=args.taxa_df)
+    # encode_labels=False means `labels` is no longer a ClassLabel feature, so it can
+    # no longer be used to stratify the split -- see load_dataset_from_path's docstring.
+    split = train_ds.train_test_split(test_size=0.1, seed=args.seed)
 
-    train_ds = split["train"] 
+    train_ds = split["train"]
 
     print(f"Loading test dataset from {args.test_data_path}")
-    test_ds = load_dataset_from_path(args.test_data_path, split=args.test_split)
+    test_ds = load_dataset_from_path(args.test_data_path, split=args.test_split,
+                                      encode_labels=False, rank=args.taxa_rank, taxa_df=args.taxa_df)
 
     train_fasta = os.path.join(args.outdir, "train.fa")
     test_fasta = os.path.join(args.outdir, "test.fa")

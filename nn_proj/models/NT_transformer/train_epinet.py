@@ -16,6 +16,23 @@ from nn_proj.models.epinet.feature_fns import NT_feature_fn, NT_first_last_featu
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
+    """Collects the state dict and dumps it to output_dir/model.safetensors.
+
+    Same helper train_base.py uses. Without this, the only thing this script
+    wrote was a custom model_epinet.pt pickle -- a different file, in a
+    different format, than what inference.py's epinet branch actually loads
+    (safetensors.torch.load_file(checkpoint/model.safetensors)). Every epinet
+    inference run failed with FileNotFoundError until this was added; found
+    by running the pipeline end to end, not anticipated in
+    docs/MODEL_CODE_FIXES.md. See docs/REVISION_PLAN.md.
+    """
+    state_dict = trainer.model.state_dict()
+    if trainer.args.should_save:
+        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
+        del state_dict
+        trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
+
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -50,8 +67,12 @@ def train():
     else:
         train_dataset = load_local_dataset(path=data_args.data_path, encode_labels=True, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
-    # data split
-    split = train_dataset.train_test_split(test_size=0.1, seed=training_args.seed, stratify_by_column="labels")
+    # data split. Uses data_seed, matching every other train/epinet/scaling
+    # script -- see docs/MODEL_CODE_FIXES.md item 2.4. Using training_args.seed
+    # here was harmless only because the shell scripts always set --seed and
+    # --data_seed to the same value; it would otherwise silently fit the
+    # epinet on part of the base model's own validation split.
+    split = train_dataset.train_test_split(test_size=0.1, seed=training_args.data_seed, stratify_by_column="labels")
     train_dataset, val_dataset = split["train"], split["test"]
 
     train_dataset, data_collator = prep_for_trainer(train_dataset, tokenizer)
@@ -124,13 +145,16 @@ def train():
     if training_args.save_model:
         trainer.save_state()  # optional: trainer internals
 
-        # Save state dict + metadata so you can rebuild later
+        # output_dir/model.safetensors -- what inference.py actually loads.
+        safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+
+        # Also save state dict + metadata so you can rebuild later
         os.makedirs(training_args.output_dir, exist_ok=True)
         torch.save(
             {
                 "state_dict": model.state_dict(),
                 "base_model_name": model_args.model_name_or_path,
-                "num_labels": train_dataset.features["label"].num_classes,
+                "num_labels": train_dataset.features["labels"].num_classes,
                 "epinet_cfg": model.cfg.__dict__,   # EpinetConfig fields
                 "feature_fn": "NT_feature_fn",      # or "NT_tokens_feature_fn"
             },
