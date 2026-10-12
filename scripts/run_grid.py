@@ -63,6 +63,14 @@ class Job:
     argv: List[str]
     outdir: Optional[Path] = None
     output_marker: Optional[Path] = None
+    # Set for inference jobs whose --temperature needs a value from a
+    # temperature-fitting job that may not have run yet when this Job object
+    # is constructed (see main(): jobs are all built with `list(grid.jobs(...))`
+    # before any of them execute). temp_key is the checkpoints/temperatures.json
+    # lookup key ("{seed}/{backbone}/{task_dir}"); the execution loop resolves
+    # it fresh immediately before running this job, instead of using whatever
+    # --temperature value was baked into argv at construction time.
+    temp_key: Optional[str] = None
 
     def exists(self) -> bool:
         return self.output_marker is not None and self.output_marker.exists()
@@ -144,7 +152,13 @@ class Grid:
                                       "--warmup_steps", str(train_cfg["warmup_steps"]),
                                       "--weight_decay", str(train_cfg["weight_decay"]),
                                       *(["--fp16"] if train_cfg["fp16"] else []),
-                                      "--overwrite_output_dir", "True"],
+                                      "--overwrite_output_dir", "True",
+                                      # Without this, train_base.py only writes the Trainer's
+                                      # automatic per-epoch checkpoint-N/ subdirs, never
+                                      # output_dir/model.safetensors directly -- which is what
+                                      # every downstream stage's --checkpoint expects. Discovered
+                                      # by actually running this stage; see docs/REVISION_PLAN.md.
+                                      "--save_model", "True"],
                             )
 
                         if "epinet" in stages:
@@ -165,7 +179,12 @@ class Grid:
                                       "--per_device_eval_batch_size",
                                       str(train_cfg["per_device_eval_batch_size"]),
                                       *(["--fp16"] if train_cfg["fp16"] else []),
-                                      "--overwrite_output_dir", "True"],
+                                      "--overwrite_output_dir", "True",
+                                      # Same reason as the train stage above, plus a second bug:
+                                      # train_epinet.py's own --save_model branch wrote a custom
+                                      # model_epinet.pt, not the model.safetensors inference.py
+                                      # actually loads -- fixed alongside this flag.
+                                      "--save_model", "True"],
                             )
 
                         if "temperature" in stages:
@@ -181,25 +200,53 @@ class Grid:
                             )
 
                         if "inference" in stages:
+                            # NOTE: this snapshot is read once per (seed, backbone, task), at
+                            # whatever moment the caller's iteration reaches this line -- which,
+                            # because main() does `jobs = list(grid.jobs(...))`, materializing
+                            # every job *before running any of them*, is BEFORE this task's own
+                            # temperature-fitting job (yielded earlier in this same loop) has
+                            # actually executed on a fresh run. The value baked into argv here is
+                            # therefore frequently stale or missing -- every base_scaled job
+                            # silently used T=1.0 (identical to base) on every backbone that
+                            # hadn't been run in some *earlier separate* invocation. The real fix
+                            # is Job.temp_key below: the execution loop re-resolves the
+                            # temperature fresh, immediately before each job actually runs. This
+                            # snapshot is kept only for --dry-run's printed preview.
                             temps = self.load_temperatures()
                             for method, (flag, needs_epi, needs_temp) in METHODS.items():
                                 for test_name, test_path in task["tests"].items():
                                     test_dir = f"{test_name}_{rank}" if rank else test_name
                                     out = self._fmt("predictions", seed=seed, backbone=backbone,
                                                     method=method, task=task_dir, test=test_dir)
-                                    ckpt = epi_ckpt if needs_epi else base_ckpt
+                                    temp_key = f"{seed}/{backbone}/{task_dir}"
                                     temp = 1.0
                                     if needs_temp:
-                                        temp = temps.get(f"{seed}/{backbone}/{task_dir}", 1.0)
+                                        temp = temps.get(temp_key, 1.0)
+                                    # --checkpoint always stays the *base* checkpoint, even for
+                                    # epinet inference: inference.py resolves the model's config
+                                    # from --checkpoint (AutoConfig.from_pretrained), and the
+                                    # epinet checkpoint directory never has one -- HFEpinetSeqClassifier
+                                    # isn't a transformers.PreTrainedModel, so nothing ever writes a
+                                    # config.json there. Pointing --checkpoint at it doesn't error;
+                                    # AutoConfig silently returns an unrelated default config (seen:
+                                    # GlmConfig, MptConfig, both wrong), so the model gets built with
+                                    # the wrong architecture and load_state_dict fails with hundreds
+                                    # of missing keys. --epinet_path is the override inference.py
+                                    # already reads for *where to load weights from*, precisely for
+                                    # this case; found by running the pipeline end to end, not
+                                    # anticipated in docs/MODEL_CODE_FIXES.md. See docs/REVISION_PLAN.md.
+                                    epinet_args = ["--epinet_path", str(epi_ckpt)] if needs_epi else []
                                     yield Job(
                                         stage="inference",
                                         name=f"seed{seed}/{backbone}/{method}/{task_dir}/{test_dir}",
                                         outdir=out,
                                         output_marker=out / "inference_uncertainty.csv",
+                                        temp_key=temp_key if needs_temp else None,
                                         argv=[sys.executable, "-m",
                                               f"nn_proj.models.{backbone}.inference",
                                               *self._data_args(task, rank, test_path), *common,
-                                              "--checkpoint", str(ckpt),
+                                              "--checkpoint", str(base_ckpt),
+                                              *epinet_args,
                                               "--output_dir", str(out),
                                               "--run_name", f"{backbone}_{method}_{test_dir}_s{seed}",
                                               "--uncertainty_method", flag,
@@ -297,6 +344,15 @@ def main() -> None:
         print(f"\n=== [{i}/{len(jobs)}] {job.stage}: {job.name}", flush=True)
         if job.outdir:
             job.outdir.mkdir(parents=True, exist_ok=True)
+        if job.temp_key is not None:
+            # Re-resolve from disk right now, not whatever was baked into argv
+            # when the full job list was constructed up front (see the comment
+            # on temp_key's definition and in jobs() above) -- this task's own
+            # temperature-fitting job may have only just run, moments ago, as
+            # an earlier iteration of this very loop.
+            fresh_temp = grid.load_temperatures().get(job.temp_key, 1.0)
+            idx = job.argv.index("--temperature")
+            job.argv[idx + 1] = str(fresh_temp)
         capture = job.stage == "temperature"
         proc = subprocess.run(job.argv, cwd=REPO_ROOT, text=True,
                               capture_output=capture)

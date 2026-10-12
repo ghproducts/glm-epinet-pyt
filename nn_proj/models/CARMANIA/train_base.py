@@ -73,9 +73,7 @@ def train():
         train_dataset = load_local_dataset(path=data_args.data_path, encode_labels=True, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
 
-    print(len(train_dataset), "training examples loaded.")
-    train_dataset.filter(lambda ex: ex["labels"] != -1)  # remove unlabelled examples
-    print(len(train_dataset), "training examples after filtering unlabelled.")
+    print(len(train_dataset), "training examples loaded (unmapped-taxid rows already dropped).")
 
     print("number of classes:", train_dataset.features["labels"].num_classes)
 
@@ -121,7 +119,9 @@ def train():
     # model = enable_mc_dropout(model, p=0.1)
 
     # define trainer
-    trainer = transformers.Trainer(model=model,
+    trainer = transformers.Trainer(callbacks=([transformers.EarlyStoppingCallback(training_args.early_stopping_patience)]
+                                                  if training_args.early_stopping_patience > 0 else None),
+                                       model=model,
                                    tokenizer=tokenizer,
                                    args=training_args,
                                    preprocess_logits_for_metrics=preprocess_logits_for_metrics,
@@ -129,7 +129,7 @@ def train():
                                    train_dataset=train_dataset,
                                    eval_dataset=val_dataset,
                                    data_collator=data_collator)
-    trainer.train()
+    trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)   # None = fresh start
 
     if training_args.save_model:
         trainer.save_state()

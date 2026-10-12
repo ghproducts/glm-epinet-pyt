@@ -93,8 +93,7 @@ def get_scalilng_params():
     else:
         train_dataset = load_local_dataset(path=data_args.data_path, encode_labels=True, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
-    train_dataset.filter(lambda ex: ex["labels"] != -1)  # remove unlabelled examples
-
+    # Unmapped-taxid rows (label -1) are already dropped inside load_local_dataset.
     split = train_dataset.train_test_split(test_size=0.1, seed=training_args.data_seed, stratify_by_column="labels")
     __, val_dataset = split["train"], split["test"]
 

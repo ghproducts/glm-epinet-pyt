@@ -103,7 +103,11 @@ def NT_feature_fn(m: AutoModelForSequenceClassification, batch):
 
     out = m(**inputs, output_hidden_states=True)
     mu = out.logits                                   # [B, C]
-    last = out.hidden_states[-1]                      # [B, L, H]
+    hs = out.hidden_states
+    # DNABERT-2's remote BertForSequenceClassification returns the final layer as a
+    # single [B, L, H] tensor rather than a per-layer tuple; indexing it with [-1]
+    # would select the last *sequence* of the batch, not the last layer.
+    last = hs if torch.is_tensor(hs) else hs[-1]      # [B, L, H]
     mask = inputs.get("attention_mask", None)
 
     if mask is None:

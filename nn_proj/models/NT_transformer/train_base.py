@@ -72,9 +72,7 @@ def train():
     else:
         train_dataset = load_local_dataset(path=data_args.data_path, encode_labels=True, rank=data_args.taxa_rank, taxa_df=data_args.taxa_df)
 
-    print(len(train_dataset), "training examples loaded.")
-    train_dataset.filter(lambda ex: ex["labels"] != -1)  # remove unlabelled examples
-    print(len(train_dataset), "training examples after filtering unlabelled.")
+    print(len(train_dataset), "training examples loaded (unmapped-taxid rows already dropped).")
 
     print("number of classes:", train_dataset.features["labels"].num_classes)
 
@@ -106,10 +104,35 @@ def train():
         problem_type = "single_label_classification"
     )
 
+    if training_args.freeze_bottom_layers > 0:
+        # NT is a 29-layer ESM encoder. Freezing the embeddings and the lower
+        # layers leaves optimizer state and stored activations only for the
+        # trainable top, which is what allows 6kb reads (1000 tokens) to fit
+        # alongside other jobs on a shared GPU. EsmForSequenceClassification
+        # does not implement gradient_checkpointing_enable, so that route is
+        # unavailable here.
+        n = training_args.freeze_bottom_layers
+        base = model.base_model
+        frozen = 0
+        for name, p in base.named_parameters():
+            keep = False
+            if name.startswith("encoder.layer."):
+                keep = int(name.split(".")[2]) >= n
+            if not keep:
+                p.requires_grad = False
+                frozen += p.numel()
+        tot = sum(p.numel() for p in model.parameters())
+        train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"[freeze] bottom {n} layers + embeddings frozen: "
+              f"{train/1e6:.1f}M trainable of {tot/1e6:.1f}M ({100*train/tot:.1f}%)")
+
+
     model = enable_mc_dropout(model, p=0.1) # adjust p as needed
 
     # define trainer
-    trainer = transformers.Trainer(model=model,
+    trainer = transformers.Trainer(callbacks=([transformers.EarlyStoppingCallback(training_args.early_stopping_patience)]
+                                                  if training_args.early_stopping_patience > 0 else None),
+                                       model=model,
                                    tokenizer=tokenizer,
                                    args=training_args,
                                    preprocess_logits_for_metrics=preprocess_logits_for_metrics,
@@ -119,7 +142,7 @@ def train():
                                    data_collator=data_collator,
                                    )
     
-    trainer.train()
+    trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)   # None = fresh start
 
     if training_args.save_model:
         trainer.save_state()

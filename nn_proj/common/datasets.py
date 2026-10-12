@@ -59,10 +59,18 @@ def load_NT_tasks(task: str, split: str, encode_labels: bool = True) -> Dataset:
 
 
 # Local single-file datasets (csv/tsv/json/jsonl/parquet)
-def load_local_dataset(path: str, encode_labels: bool = True, rank=None, taxa_df=None) -> Dataset:
+def load_local_dataset(path: str, encode_labels: bool = True, rank=None, taxa_df=None,
+                        drop_unmapped: bool = True) -> Dataset:
     """
     Load a single local file (CSV/TSV/JSON/JSONL/Parquet) as a Dataset (single split named 'train').
     Expects columns: 'sequence', 'label' or 'labels'.
+
+    When ``rank`` remaps a taxid through ``taxa_df``, any row whose taxid is
+    absent from the lineage table gets label -1. ``drop_unmapped=True``
+    (default) removes those rows *before* label encoding, so they can never
+    become a trainable "unknown" class. Set it to False only to inspect
+    what would be dropped; passing unmapped rows on to
+    ``class_encode_column`` will legitimize -1 as a real class.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Could not find dataset at: {path}")
@@ -99,8 +107,13 @@ def load_local_dataset(path: str, encode_labels: bool = True, rank=None, taxa_df
                                      lineage_df[rank].astype("Int64")))
         ds = ds.map(lambda ex: {"labels": int(species_to_target.get(ex["taxid"], -1))})
 
-        #ds = ds.map(lambda ex: {"target": species_to_target.get((ex["taxid"]), -1)},
-        #            remove_columns=["taxid"])
+        if drop_unmapped:
+            n_before = len(ds)
+            ds = ds.filter(lambda ex: ex["labels"] != -1)
+            n_dropped = n_before - len(ds)
+            if n_dropped:
+                print(f"[load_local_dataset] dropped {n_dropped}/{n_before} rows with no "
+                      f"'{rank}' in {taxa_df} (unmapped taxid -> label -1)")
 
     if encode_labels and not isinstance(ds.features["labels"], ClassLabel):
         ds = ds.class_encode_column("labels")
