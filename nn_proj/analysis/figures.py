@@ -72,6 +72,7 @@ def _order(values: Sequence[str], reference: Sequence[str]) -> List[str]:
 def _save(fig, outpath: Optional[Path]) -> None:
     if outpath is None:
         return
+    outpath = Path(outpath)  # tolerate a plain str; the type hint alone didn't enforce it
     outpath.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(outpath, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -88,7 +89,11 @@ def ece_vs_error(
     outpath: Optional[Path] = None,
     title: str = "",
     calibration_only: bool = True,
-    figsize_per_panel: tuple = (3.6, 3.4),
+    figsize_per_panel: tuple = (2.6, 2.6),
+    row_of: Optional[Dict[str, str]] = None,
+    row_order: Optional[Sequence[str]] = None,
+    color_group_of: Optional[Dict[str, str]] = None,
+    pair_label_of: Optional[Dict[str, str]] = None,
 ):
     """ECE against classification error, one column per backbone.
 
@@ -99,6 +104,21 @@ def ece_vs_error(
     ``calibration_only`` drops pairs the registry marks as not supporting
     calibration — those that change the prediction target, where ECE is not
     interpretable. The manuscript's originals included them.
+
+    By default, rows are a plain ID/shifted binary split, from the registry's
+    ``category`` column (``category in {Near-OOD, OOD}`` counts as shifted;
+    the manuscript's two-tier datasets only ever needed this). For a dataset
+    with more than two tiers -- e.g. separate Near-ID and Near-OOD conditions
+    that the registry itself can't tell apart by category alone -- pass
+    ``row_of``: a ``{test_name: row_label}`` map (any test not present is
+    dropped) and, if you want a specific top-to-bottom order, ``row_order``.
+
+    The legend is always split into three pieces: a marker (method) legend,
+    a color legend for "ID" test sets, and a color legend for "OOD" test
+    sets, drawn top and bottom of the figure respectively. Which group a
+    test set falls into is ``color_group_of`` (a ``{test_name: "ID"|"OOD"}``
+    map); if omitted it falls back to the registry's ``category`` column
+    (same rule as the default row split).
     """
     df = summary[summary.train.isin(trains)].copy()
     if calibration_only:
@@ -108,10 +128,18 @@ def ece_vs_error(
         return None
 
     df["pair"] = df.train + "→" + df.test
-    df["shifted"] = df.category.isin(SHIFTED)
+
+    if row_of is not None:
+        df["row"] = df["test"].map(row_of)
+        df = df[df["row"].notna()]
+        rows = _order(df["row"].unique(), row_order or [])
+        row_title = lambda r: r  # noqa: E731
+    else:
+        df["row"] = df.category.isin(SHIFTED)
+        rows = [False, True] if df["row"].any() and (~df["row"]).any() else [df["row"].iloc[0]]
+        row_title = lambda r: "OOD" if r else "ID"  # noqa: E731
 
     backbones = _order(df.backbone.unique(), BACKBONE_ORDER)
-    rows = [False, True] if df.shifted.any() and (~df.shifted).any() else [df.shifted.iloc[0]]
     pairs = sorted(df.pair.unique())
     pair_color = {p: plt.get_cmap("tab10")(i % 10) for i, p in enumerate(pairs)}
 
@@ -120,10 +148,11 @@ def ece_vs_error(
         figsize=(figsize_per_panel[0] * len(backbones), figsize_per_panel[1] * len(rows)),
     )
 
-    for r, shifted in enumerate(rows):
+    for r, row_val in enumerate(rows):
         for c, backbone in enumerate(backbones):
             ax = axes[r][c]
-            cell = df[(df.backbone == backbone) & (df.shifted == shifted)]
+            ax.set_box_aspect(1)
+            cell = df[(df.backbone == backbone) & (df["row"] == row_val)]
             for pair, grp in cell.groupby("pair"):
                 grp = grp.set_index("method")
                 if "base" in grp.index:
@@ -134,26 +163,82 @@ def ece_vs_error(
                         m = grp.loc[method]
                         ax.plot([b.error_mean * 100, m.error_mean * 100],
                                 [b.ece_mean * 100, m.ece_mean * 100],
-                                color=pair_color[pair], lw=1.6, alpha=0.7, zorder=1)
+                                color=pair_color[pair], lw=3.0, alpha=0.7, zorder=1)
                 for method, row in grp.iterrows():
                     ax.scatter(row.error_mean * 100, row.ece_mean * 100,
                                marker=METHOD_MARKER.get(method, "o"), s=70,
-                               color=pair_color[pair], edgecolor="k", lw=0.8, zorder=2)
-            ax.set_title(f"{BACKBONE_LABEL.get(backbone, backbone)} — "
-                         f"{'OOD' if shifted else 'ID'}", fontsize=11)
-            ax.grid(True, ls="--", alpha=0.4)
+                               color=pair_color[pair], edgecolor="k", lw=1.6, zorder=2)
+            label = row_title(row_val)
+            suffix = f" — {label}" if label else ""
+            ax.set_title(f"{BACKBONE_LABEL.get(backbone, backbone)}{suffix}", fontsize=11)
+            ax.grid(True, ls="--", alpha=0.4, linewidth=1.1)
+            for spine in ax.spines.values():
+                spine.set_linewidth(1.6)
+            ax.tick_params(width=1.4)
             if c == 0:
                 ax.set_ylabel("ECE [%]")
             if r == len(rows) - 1:
                 ax.set_xlabel("Classification Error [%]")
 
-    handles = [Line2D([], [], marker=METHOD_MARKER.get(m, "o"), ls="", color="k",
-                      markerfacecolor="w", markersize=9, label=METHOD_LABEL.get(m, m))
-               for m in _order(df.method.unique(), METHOD_ORDER)]
-    handles += [Line2D([], [], marker="s", ls="", color=pair_color[p], markersize=9, label=p)
-                for p in pairs]
-    fig.legend(handles=handles, loc="lower center", ncol=min(4, len(handles)),
-               frameon=True, bbox_to_anchor=(0.5, -0.10), fontsize=9)
+    # Marker legend: which shape is which UQ method.
+    method_handles = [
+        Line2D([], [], marker=METHOD_MARKER.get(m, "o"), ls="", color="k",
+               markerfacecolor="w", markeredgecolor="k", markeredgewidth=1.3,
+               markersize=9, label=METHOD_LABEL.get(m, m))
+        for m in _order(df.method.unique(), METHOD_ORDER)
+    ]
+
+    # Color legend: which color is which test set, grouped by whatever
+    # labels ``color_group_of`` assigns (falls back to a plain ID/OOD split
+    # off the registry's ``category`` column). One legend box per distinct
+    # group label, stacked in the right-hand column. Every swatch is a
+    # black-edged filled circle.
+    if color_group_of is not None:
+        group_of_test = color_group_of
+    else:
+        cat_by_test = df.drop_duplicates("test").set_index("test")["category"]
+        group_of_test = {t: ("OOD" if c in SHIFTED else "ID") for t, c in cat_by_test.items()}
+
+    def _pair_group(pair: str) -> str:
+        test = pair.split("→", 1)[-1]
+        return group_of_test.get(test, "ID")
+
+    def _pair_label(pair: str) -> str:
+        if pair_label_of is not None:
+            test = pair.split("→", 1)[-1]
+            if test in pair_label_of:
+                return pair_label_of[test]
+        return pair
+
+    def _color_handles(pair_list: Sequence[str]) -> List[Line2D]:
+        return [
+            Line2D([], [], marker="o", ls="", markersize=10,
+                   markerfacecolor=pair_color[p], markeredgecolor="k", markeredgewidth=1.2,
+                   label=_pair_label(p))
+            for p in pair_list
+        ]
+
+    groups = list(dict.fromkeys(_pair_group(p) for p in pairs))
+    group_handles = [(g, _color_handles([p for p in pairs if _pair_group(p) == g])) for g in groups]
+    group_handles = [(g, h) for g, h in group_handles if h]
+
+    # Stack legend boxes top-to-bottom in the right-hand column, each
+    # anchored by its own top-left corner so a box's height (which depends
+    # on its entry count, and on the figure's own height once bbox_inches
+    # crops it) never overlaps the box above it.
+    fig_h = fig.get_size_inches()[1]
+
+    def _box_height_frac(n_entries: int) -> float:
+        return (0.55 + 0.30 * n_entries) / fig_h
+
+    y = 0.99
+    fig.legend(handles=method_handles, loc="upper left", bbox_to_anchor=(1.01, y),
+               ncol=1, frameon=True, fontsize=9, title="Method")
+    y -= _box_height_frac(len(method_handles)) + 0.05
+    for g, handles in group_handles:
+        fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(1.01, y),
+                   ncol=1, frameon=True, fontsize=9, title=f"{g} test sets")
+        y -= _box_height_frac(len(handles)) + 0.05
     if title:
         fig.suptitle(title, fontsize=13, y=1.01)
     fig.tight_layout()

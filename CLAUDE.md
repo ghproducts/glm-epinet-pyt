@@ -95,9 +95,25 @@ head — and its `train_base.py`/`inference.py` build this custom class instead 
 a standalone, hardcoded dev/scratch script (not wired into the shared pipeline — don't treat it as
 a template for the other stages).
 
-`nn_proj/models/epinet/utils.py` is a stale scratch file (duplicates `compute_uncertainty`/
-`compute_metrics` from `nn_proj/common/utils.py`, imports from a non-package-relative `epinet`
-module, references an undefined `MODEL_NAME`) — it is not imported anywhere else in the codebase.
+### Experiment pipelines (`data_gen/`)
+
+The paper's current experiments run outside the four-stage shell scripts:
+
+- **Taxonomic shift** — `data_gen/clean_fragments/` (clean 1.5kb RefSeq fragments, clade-exclusion
+  tiers; plan in `.docs/plans/TAXA_SHIFT_PLAN.md`). Train with
+  `scripts/train_clean1500.sh <backbone> <phylum|family|gene_taxa> <seed> <gpu>` (or a queue via
+  `scripts/run_clean1500_queue.sh`), evaluate with `data_gen/clean_fragments/eval_clean1500.py`,
+  aggregate with `full_tables.py`/`render_tables.py`. `data_gen/darkmatter/` is the dark-matter case
+  study; `data_gen/pbsim/` holds the genome splits and the earlier PBSIM-read analyses.
+- **Regulatory UQ sweep** — `data_gen/uq_sweep/` (config-driven backbone × method × dataset grid over
+  `promoter_alisim` and `aleatoric_boundary`; base models are trained on
+  `label_noise/csv_data_r00`, i.e. clean `promoter_all`, built by `label_noise/make_noisy_labels.py`).
+
+Superseded experiments (leave_phyla_out v1–v3, gene_taxa, uq_metrics_followup, label-noise variants,
+older dark-matter scripts, promoter_motifs v2) live only on the `archive/*-wip-2026-10-12` branches.
+
+Never edit a shell script while jobs are executing it (bash reads scripts incrementally); launch long
+runs from a copy.
 
 ### Epinet mechanics (`nn_proj/models/epinet/epinet.py`)
 

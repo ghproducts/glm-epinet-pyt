@@ -201,7 +201,9 @@ def m_conv_epinet(bb, ds, seed, args):
             stacks.append(model.wrapper(inputs, n_index_samples=K_EPINET,
                                         return_all=True).float().cpu())
     del model, base
-    return _emit(ds, stacks, all_labels, "conv_epinet")
+    label = ("conv_epinet" if kind == "epinet_zfix"
+             else "conv_epinet_" + kind.replace("epinet_abl_", "abl_"))
+    return _emit(ds, stacks, all_labels, label)
 
 
 def m_laplace(bb, ds, seed, args):
@@ -409,7 +411,10 @@ def main():
                         skipped.append((dsname, bname, mname, eff_seed,
                                         f"missing {NEEDS[mname]} for seed(s) {missing}"))
                         continue
-                    out = S.cell_path(dsname, bname, mname, eff_seed)
+                    label = mname
+                    if mname == "conv_epinet" and args.epinet_kind != "epinet_zfix":
+                        label = "conv_epinet_" + args.epinet_kind.replace("epinet_abl_", "abl_")
+                    out = S.cell_path(dsname, bname, label, eff_seed)
                     if os.path.exists(out) and not args.force:
                         skipped.append((dsname, bname, mname, eff_seed, "already done"))
                         continue
@@ -447,7 +452,10 @@ def main():
             if S.DEVICE == "cuda":
                 torch.cuda.manual_seed_all(cell_seed)
             rows = METHODS[mname](bb, ds, raw_seed, args)
-            path = S.write_cell(rows, dsname, bname, mname, eff_seed)
+            label = mname
+            if mname == "conv_epinet" and args.epinet_kind != "epinet_zfix":
+                label = "conv_epinet_" + args.epinet_kind.replace("epinet_abl_", "abl_")
+            path = S.write_cell(rows, dsname, bname, label, eff_seed)
             acc = sum(r["correct"] for r in rows) / len(rows)
             print(f"    wrote {path}  n={len(rows)}  acc={acc:.4f}", flush=True)
         except Exception as exc:

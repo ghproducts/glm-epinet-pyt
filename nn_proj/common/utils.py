@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional, Dict, Sequence, Tuple, List, Union
 
+import warnings
+
 import torch
 import sklearn
 import numpy as np
@@ -8,15 +10,40 @@ from torch.utils.data import Dataset
 import torch.nn as nn
 import torch.nn.functional as F
 
-dropout_types = (nn.Dropout, nn.Dropout1d, nn.Dropout2d, nn.Dropout3d, nn.AlphaDropout)
+dropout_types = (nn.Dropout, nn.Dropout1d, nn.Dropout2d, nn.Dropout3d,
+                  nn.AlphaDropout, nn.FeatureAlphaDropout)
 
 def enable_mc_dropout(model, p=0.1):
+    """Enable dropout at inference time for MC-dropout sampling.
+
+    Puts the model in eval mode, then puts every dropout submodule back into
+    train mode (so dropout is active) and sets its rate explicitly to ``p``.
+    Explicitly setting ``p`` matters: leaving it unset means MC-dropout runs
+    at whatever rate the pretrained config happened to carry, which is not
+    necessarily the rate reported in the manuscript (p=0.1) -- this was true
+    for 3 of the 4 backbones before every ``inference.py`` was pointed at
+    this one implementation. See docs/MODEL_CODE_FIXES.md item 2.2.
+
+    Logs how many dropout layers were found and warns if none were, since
+    that would silently make MC-dropout a no-op (every stochastic forward
+    pass identical to the deterministic one).
+    """
     model.eval()
+    n_found = 0
     for m in model.modules():
         if isinstance(m, dropout_types):
             if p is not None:
                 m.p = p
             m.train()
+            n_found += 1
+
+    if n_found == 0:
+        warnings.warn(
+            "enable_mc_dropout found no dropout layers in this model; "
+            "MC-dropout sampling will be a no-op (every forward pass identical)."
+        )
+    else:
+        print(f"[enable_mc_dropout] p={p} on {n_found} dropout layer(s)")
     return model
 
 
@@ -124,3 +151,21 @@ def compute_uncertainty(epi_out_logits: torch.Tensor):
     return out
 
 
+
+
+def disable_dnabert2_flash_attn():
+    """Route DNABERT-2 attention through its PyTorch path instead of the Triton kernel.
+
+    DNABERT-2's remote code (bert_layers.py) uses a bundled Triton flash-attention
+    kernel whenever attention dropout is 0, and that kernel no longer compiles with
+    current Triton (``tl.dot(..., trans_b=True)``). Its own fallback -- taken when
+    ``flash_attn_qkvpacked_func is None`` -- computes the same attention in plain
+    PyTorch, so this only changes speed, not the model. Call after the model has
+    been loaded (the remote module must already be imported).
+    """
+    import sys
+    n = 0
+    for name, mod in list(sys.modules.items()):
+        if name.endswith("bert_layers") and getattr(mod, "flash_attn_qkvpacked_func", None) is not None:
+            mod.flash_attn_qkvpacked_func = None; n += 1
+    return n
