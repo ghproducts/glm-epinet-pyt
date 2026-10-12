@@ -89,3 +89,8 @@ __pycache__/
 /data_gen/uq_metrics_followup/
 /data_gen/uq_sweep/results_prelabelmerge_backup/
 /data_gen/promoter_motifs/splits_v2/
+# Claude Code files: project instructions, local settings, agent worktrees
+**/CLAUDE.md
+**/CLAUDE.local.md
+.claude/
+.mcp.json
