@@ -28,9 +28,9 @@ LOGDIR="${LOGDIR:-$REPO/data_gen/uq_sweep/retrain_logs}"
 # model_max_length per backbone: seq_length(300) * tokens_per_base
 max_length_for() {
   case "$1" in
-    NT_transformer) echo 50  ;;   # 6-mer  -> 1/6
-    DNABERT2)       echo 75  ;;   # BPE    -> ~1/4
-    hyenaDNA)       echo 300 ;;   # char-level
+    NT_transformer) echo 52  ;;   # <cls> + 50 six-mers + eos
+    DNABERT2)       echo 77  ;;   # BPE, max observed over all corpora
+    hyenaDNA)       echo 301 ;;   # 300 chars + [SEP]
     CARMANIA)       echo 300 ;;   # char-level
     *) echo "unknown backbone $1" >&2; return 1 ;;
   esac

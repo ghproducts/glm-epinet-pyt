@@ -79,7 +79,10 @@ def train():
     # combine with epinet to form model
     #epi_cfg = EpinetConfig(num_classes=num_labels)
     #wrapper = EpinetWrapper(model, hyenaDNA_feature_fn, epi_cfg, epinet=MLPEpinetWithPrior)
-    epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True, vocab_size=config.vocab_size)
+    epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True,
+                           vocab_size=config.vocab_size,
+                           prior_scale=model_args.prior_scale,
+                           conv_prior_scale=model_args.conv_prior_scale)
     wrapper = EpinetWrapper(model,hyenaDNA_feature_fn, epi_cfg, epinet=MLPEpinetWithConvPrior)
     model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=8).to(DEVICE)
 

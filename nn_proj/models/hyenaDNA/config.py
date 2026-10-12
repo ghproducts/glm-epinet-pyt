@@ -17,6 +17,8 @@ class ModelArguments:
     num_samples: int = field(default=1, metadata={"help": "Number of samples for MC dropout or epinet."})
     uncertainty_method: str = field(default=None, metadata={"help": "Uncertainty method to use: epinet or mc_dropout."})
     temperature: float = field(default=1.0, metadata={"help": "Temperature scaling parameter."})
+    prior_scale: float = field(default=1.0, metadata={"help": "Epinet MLP prior scale; 0 disables the randomized MLP prior (capacity ablation)."})
+    conv_prior_scale: float = field(default=1.0, metadata={"help": "Epinet conv prior scale; 0 disables the fixed conv prior ensemble (capacity ablation)."})
 
 @dataclass
 class DataArguments:

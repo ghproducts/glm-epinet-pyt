@@ -1,14 +1,14 @@
 #!/bin/bash
 # Train evidential heads for the seeds the sweep is missing.
 #
-# Hyperparameters match the original DNABERT2 evidential run exactly (recovered
-# from its training_args.bin): lr 2e-5, batch 64, 6 epochs, fp16, warmup 50,
-# weight_decay 0.01, softplus/mse/annealing_step 3.
+# Hyperparameters follow the original DNABERT2 evidential run (recovered from its
+# training_args.bin): lr 2e-5, batch 64, fp16, warmup 50, weight_decay 0.01,
+# softplus/mse/annealing_step 3 -- but 2 epochs, not its 6.
 #
-# 6 epochs is kept even though load_best_model_at_end always selects epoch 1
-# (eval_loss rises after): num_train_epochs sets the LR decay horizon, so
-# shortening it would change the epoch-1 weights and make seeds
-# non-comparable.
+# 2 epochs, matching every other stage in this project. The original DNABERT2
+# evidential checkpoint used 6, but load_best_model_at_end selects epoch 1
+# regardless (eval_loss rises after), and num_train_epochs only sets the LR
+# decay horizon -- so 2 is both consistent and sufficient.
 #
 #   bash retrain_evidential.sh                    # all backbones, seeds 2,3
 #   SEEDS="2" BACKBONES="hyenaDNA" GPU=9 bash retrain_evidential.sh
@@ -20,15 +20,15 @@ DATA="${DATA:-/scratch/home/glh52/glm-epinet-pyt/data_gen/label_noise/csv_data_r
 PY="${PY:-/scratch/home/glh52/venvs/aleatoric_boundary_venv/bin/python}"
 BACKBONES="${BACKBONES:-DNABERT2 NT_transformer hyenaDNA CARMANIA}"
 SEEDS="${SEEDS:-2 3}"
-EPOCHS="${EPOCHS:-6}"
+EPOCHS="${EPOCHS:-2}"
 GPU="${GPU:-0}"
 LOGDIR="${LOGDIR:-$REPO/data_gen/uq_sweep/retrain_logs}"
 
 max_length_for() {
   case "$1" in
-    NT_transformer) echo 50  ;;
-    DNABERT2)       echo 75  ;;
-    hyenaDNA)       echo 300 ;;
+    NT_transformer) echo 52  ;;   # <cls> + 50 six-mers + eos
+    DNABERT2)       echo 77  ;;   # BPE, max observed over all corpora
+    hyenaDNA)       echo 301 ;;   # 300 chars + [SEP]
     CARMANIA)       echo 300 ;;
     *) echo "unknown backbone $1" >&2; return 1 ;;
   esac

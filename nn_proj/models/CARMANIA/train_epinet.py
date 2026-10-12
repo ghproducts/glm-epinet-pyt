@@ -96,7 +96,10 @@ def train():
     # combine with epinet to form model
     #epi_cfg = EpinetConfig(num_classes=num_labels)
     #wrapper = EpinetWrapper(model, NT_feature_fn, epi_cfg, epinet=MLPEpinetWithPrior)
-    epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True, vocab_size= len(tokenizer)) #config.vocab_size)
+    epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True,
+                           vocab_size=len(tokenizer),  # not config.vocab_size for CARMANIA
+                           prior_scale=model_args.prior_scale,
+                           conv_prior_scale=model_args.conv_prior_scale)
     wrapper = EpinetWrapper(model, NT_feature_fn, epi_cfg, epinet=MLPEpinetWithConvPrior)
     model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=8).to(DEVICE)
 
