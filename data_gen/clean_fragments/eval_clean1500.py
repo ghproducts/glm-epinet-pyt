@@ -230,19 +230,19 @@ def main():
             pd.concat([meta, S[name]], axis=1).to_parquet(out / "base_only" / f"scores_{name}.parquet", index=False)
         json.dump({"T": T, "base": str(base_ck)}, open(out / "base_only" / "meta.json", "w"))
         return
-    del m; torch.cuda.empty_cache()
+    del m   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
 
     mc = base_model(half=False); enable_mc_dropout(mc, p=0.1)
     for name, d in sets.items():
         r = run_sampled(mc, tok, d.sequence.values, ml, a.bs, 10, False)
         S[name] = S[name].assign(mc_conf=r["conf"], mc_pred=r["pred"], mc_entropy=r["ent"], mc_epistemic=r["epi"])
-    del mc; torch.cuda.empty_cache()
+    del mc   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
     bm = base_model(half=False)
     vs = len(tok) if B == "CARMANIA" else cfg.vocab_size   # as in each backbone's train_epinet.py
     wrap = EpinetWrapper(bm, FF, EpinetConfig(num_classes=cfg.num_labels, include_inputs=True,
                                               vocab_size=vs), epinet=MLPEpinetWithConvPrior)
     em = HFEpinetSeqClassifier(wrap, k_train=8, k_eval=8).to(DEV)
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):   # flash-attn needs fp16
         em(**{k: v.to(DEV) for k, v in tok("ACGT", padding="max_length", max_length=ml, return_tensors="pt").items()})
     em.load_state_dict(load_weights(epi_ck), strict=True); em.eval()
     for name, d in sets.items():
