@@ -2,15 +2,15 @@
 # Train + evaluate the clean1500 grid from a shared job queue, N workers per GPU.
 # usage: bash scripts/run_clean1500_queue.sh <queue_file> <gpu_list e.g. 0,1,2> <workers_per_gpu> <log_dir>
 # Queue lines: "<backbone> <rank|gene_taxa> <seed>", consumed top to bottom (put the longest first).
-# Env passthrough: CKPT_ROOT, OUT_ROOT (defaults checkpoints/ and results/clean1500), and
-# EPOCHS / PATIENCE for train_clean1500.sh (early stopping when PATIENCE > 0).
+# Env passthrough: CKPT_ROOT, OUT_ROOT (defaults checkpoints/ and results/clean1500_es), and
+# EPOCHS / PATIENCE for train_clean1500.sh (default early stopping: cap 20, patience 3).
 # A job is skipped if its evaluation already finished; training is skipped if both
 # checkpoints exist, so the queue can be re-run after an interruption.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 Q=$1; GPUS=$2; W=$3; L=$4; mkdir -p "$L"
 P=/scratch/home/glh52/venvs/glm_epinet_venv/bin/python; export PYTHONPATH=$PWD
-export CKPT_ROOT=${CKPT_ROOT:-checkpoints/clean1500} EPOCHS=${EPOCHS:-2} PATIENCE=${PATIENCE:-0}; OUT_ROOT=${OUT_ROOT:-results/clean1500}
+export CKPT_ROOT=${CKPT_ROOT:-checkpoints/clean1500_es} EPOCHS=${EPOCHS:-20} PATIENCE=${PATIENCE:-3}; OUT_ROOT=${OUT_ROOT:-results/clean1500_es}
 pop() { flock "$Q.lock" bash -c "head -1 '$Q'; sed -i '1d' '$Q'"; }
 worker() { G=$1
   while true; do

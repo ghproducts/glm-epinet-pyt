@@ -2,7 +2,7 @@
 """Render results/clean1500/full_*.csv as markdown tables -> results/clean1500/full_tables.md."""
 import pandas as pd
 import sys
-R = sys.argv[1] if len(sys.argv) > 1 else "results/clean1500"
+R = sys.argv[1] if len(sys.argv) > 1 else "results/clean1500_es"
 BB = {"NT_transformer": "NT", "DNABERT2": "DNABERT2", "hyenaDNA": "hyenaDNA", "CARMANIA": "CARMANIA"}
 SC = ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "epi_epistemic", "maha", "knn"]
 SN = {"msp": "MSP", "energy": "energy", "entropy": "entropy", "mc_entropy": "MC entropy", "mc_epistemic": "MC epistemic",
