@@ -14,7 +14,7 @@ import argparse, glob, re
 import numpy as np, pandas as pd
 from scipy import stats
 from sklearn.metrics import roc_auc_score
-ap = argparse.ArgumentParser(); ap.add_argument("--root", default="results/clean1500"); A = ap.parse_args()
+ap = argparse.ArgumentParser(); ap.add_argument("--root", default="results/clean1500_es"); A = ap.parse_args()
 SC = ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "epi_epistemic", "maha", "knn"]
 FPRS = [0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.50]
 cal, det, dmr = [], [], []

@@ -17,7 +17,7 @@ fragment:
   knn        cosine distance to nearest training-fragment embedding (k=1)
 Reference for maha/knn = embeddings of a fixed sample of TRAINING fragments.
 
-Outputs results/clean1500/<backbone>_<rank>_s<seed>/:
+Outputs results/clean1500_es/<backbone>_<rank>_s<seed>/:
   scores_<set>.parquet   one row per fragment, every score + prediction
   calibration.csv        accuracy / ECE per method, IN-VOCABULARY tiers only
   detection.csv          AUROC and FPR@95 per score, id_test vs each tier
@@ -129,16 +129,22 @@ def main():
                     help="also score the 0.5%%/5%% error-injected copies (off: the benchmark uses clean fragments only)")
     ap.add_argument("--base-only", action="store_true",
                     help="score only the base pass (no error variants, MC, Epinet) into <out>/base_only and exit")
-    ap.add_argument("--ckpt-root", default="checkpoints/clean1500")
-    ap.add_argument("--out-root", default="results/clean1500")
+    ap.add_argument("--ckpt-root", default="checkpoints/clean1500_es")
+    ap.add_argument("--out-root", default="results/clean1500_es")
     ap.add_argument("--limit", type=int, default=0, help="smoke test: first N rows of every set")
     ap.add_argument("--backbone", default="NT_transformer", choices=list(BACKBONES))
     a = ap.parse_args()
     global FF, AC
     B = a.backbone; HUB, ml, FF, HALF = BACKBONES[B]; AC = B in AUTOCAST
     ck_dir = Path(f"{a.ckpt_root}/{B}/{a.rank}/seed{a.seed}")
-    base_ck = sorted((ck_dir / "base").glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
-    epi_ck = sorted((ck_dir / "epinet").glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
+    def best_ck(d):
+        # the checkpoint load_best_model_at_end selected (what train_clean1500.sh trains the Epinet on);
+        # under early stopping the latest checkpoint is not necessarily the best one
+        last = sorted(d.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
+        best = json.load(open(last / "trainer_state.json")).get("best_model_checkpoint")
+        return Path(best) if best and Path(best).is_dir() else last
+    base_ck = best_ck(ck_dir / "base")
+    epi_ck = best_ck(ck_dir / "epinet")
     out = Path(f"{a.out_root}/{B}_{a.rank}_s{a.seed}"); out.mkdir(parents=True, exist_ok=True)
 
     GENE = a.rank == "gene_taxa"

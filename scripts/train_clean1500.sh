@@ -2,7 +2,8 @@
 # Train base + Epinet on the clean 1.5kb fragment benchmark (.docs/plans/TAXA_SHIFT_PLAN.md).
 # usage: bash scripts/train_clean1500.sh <backbone> <phylum|family|gene_taxa> <seed> <gpu>
 # (gene_taxa = the Scorpio gene-classification task: 437 gene labels, no taxonomic rank)
-# Recipe follows the manuscript: Adam, lr 2e-5, batch 32, 2 epochs, full fine-tune;
+# Recipe: Adam, lr 2e-5, batch 32, full fine-tune with early stopping (decided 2026-10-13; the
+# fixed 2-epoch recipe left models undertrained, see .docs/plans/TAXA_SHIFT_PLAN.md);
 # Epinet lr 1e-3 on the frozen base. train_base holds out 10% of train.csv for
 # checkpoint selection; temperature is fit separately on val.csv (held-out genome blocks).
 # Completion is signalled by the ARTIFACT (a checkpoint dir), not process exit.
@@ -13,10 +14,10 @@ cd "$(dirname "$0")/.."
 source /scratch/home/glh52/venvs/glm_epinet_venv/bin/activate
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 B=$1; R=$2; S=$3; G=$4
-# optional overrides: EPOCHS (base model, default 2), CKPT_ROOT (default checkpoints/clean1500),
-# PATIENCE (>0: base model evaluates every half epoch and stops after PATIENCE evaluations
-# without eval-loss improvement; EPOCHS is then the cap)
-EPOCHS=${EPOCHS:-2}; CKPT_ROOT=${CKPT_ROOT:-checkpoints/clean1500}; PATIENCE=${PATIENCE:-0}
+# optional overrides: EPOCHS (base-model cap, default 20), CKPT_ROOT (default checkpoints/clean1500_es),
+# PATIENCE (default 3; >0: base model evaluates every half epoch and stops after PATIENCE evaluations
+# without eval-loss improvement; PATIENCE=0 EPOCHS=2 reproduces the old fixed-length recipe)
+EPOCHS=${EPOCHS:-20}; CKPT_ROOT=${CKPT_ROOT:-checkpoints/clean1500_es}; PATIENCE=${PATIENCE:-3}
 if [ "$R" = gene_taxa ]; then
   # ~930bp median, up to 13kb; cap at 3000bp (as in the earlier gene_taxa runs: NT 500 tokens)
   D=/scratch/home/glh52/glm-epinet/DATA/gene_taxa; N=437; DATA=(--data_path $D/train.csv --num_labels $N)
