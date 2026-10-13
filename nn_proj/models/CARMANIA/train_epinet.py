@@ -133,7 +133,8 @@ def train():
     model.wrapper.cfg.stop_grad_features = True
 
     # build epinet internals
-    with torch.no_grad():
+    # autocast: with flash-attn installed, CARMANIA's attention only accepts fp16/bf16
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
         dummy = tokenizer("ACGT", truncation=True, padding="max_length", max_length=training_args.model_max_length, return_tensors="pt")
         dummy = {k: v.to(DEVICE) for k, v in dummy.items()}
         _ = model(**dummy)  # builds epinet internals

@@ -19,13 +19,15 @@ SC = ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "
 FPRS = [0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.50]
 cal, det, dmr = [], [], []
 for d in sorted(glob.glob(f"{A.root}/*_s[0-9]*")):
-    m = re.search(r"/(\w+?)_(phylum|family)_s(\d+)$", d)
+    m = re.search(r"/(\w+?)_(phylum|family|gene_taxa)_s(\d+)$", d)
     if not m or not glob.glob(f"{d}/detection.csv"): continue
     b, r, s = m.group(1), m.group(2), int(m.group(3)); key = dict(backbone=b, rank=r, seed=s)
     c = pd.read_csv(f"{d}/calibration.csv")
     c["error"] = c.set.str.extract(r"_err([\d.]+)$")[0].fillna("0"); c["set"] = c.set.str.replace(r"_err[\d.]+$", "", regex=True)
     cal.append(c.assign(**key))
     det.append(pd.read_csv(f"{d}/detection.csv").assign(**key))
+    if not glob.glob(f"{d}/scores_darkmatter.parquet"):
+        continue   # gene_taxa runs have no dark matter evaluation
     dm = pd.read_parquet(f"{d}/scores_darkmatter.parquet"); idt = pd.read_parquet(f"{d}/scores_id_test.parquet")
     for sc in SC:
         auc = {f"auroc_up{u}": roc_auc_score(np.r_[np.zeros(len(idt)), np.ones((dm.up == u).sum())], np.r_[idt[sc], dm[sc][dm.up == u]])
