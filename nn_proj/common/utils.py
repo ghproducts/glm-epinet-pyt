@@ -13,7 +13,7 @@ import torch.nn.functional as F
 dropout_types = (nn.Dropout, nn.Dropout1d, nn.Dropout2d, nn.Dropout3d,
                   nn.AlphaDropout, nn.FeatureAlphaDropout)
 
-def enable_mc_dropout(model, p=0.1):
+def enable_mc_dropout(model, p=0.1, exclude=()):
     """Enable dropout at inference time for MC-dropout sampling.
 
     Puts the model in eval mode, then puts every dropout submodule back into
@@ -27,11 +27,22 @@ def enable_mc_dropout(model, p=0.1):
     Logs how many dropout layers were found and warns if none were, since
     that would silently make MC-dropout a no-op (every stochastic forward
     pass identical to the deterministic one).
+
+    ``exclude``: qualified-name suffixes of dropout modules to leave OFF (eval mode,
+    rate untouched). MC dropout should only perturb dropout layers that were active
+    during fine-tuning (decided 2026-10-15): switching on a layer the model never
+    trained with pushes every pass off the trained model. Example: DNABERT-2 trains
+    with attention-probability dropout 0.0, so its ``.attention.self.dropout``
+    modules are excluded (enabling them at 0.1 cost 5-19 points of accuracy and gave
+    gene-task ECE 0.16, all from underconfidence).
     """
     model.eval()
-    n_found = 0
-    for m in model.modules():
+    n_found = n_skipped = 0
+    for name, m in model.named_modules():
         if isinstance(m, dropout_types):
+            if exclude and any(name.endswith(s) for s in exclude):
+                n_skipped += 1
+                continue
             if p is not None:
                 m.p = p
             m.train()
@@ -43,7 +54,8 @@ def enable_mc_dropout(model, p=0.1):
             "MC-dropout sampling will be a no-op (every forward pass identical)."
         )
     else:
-        print(f"[enable_mc_dropout] p={p} on {n_found} dropout layer(s)")
+        print(f"[enable_mc_dropout] p={p} on {n_found} dropout layer(s)"
+              + (f"; {n_skipped} excluded ({', '.join(exclude)})" if n_skipped else ""))
     return model
 
 

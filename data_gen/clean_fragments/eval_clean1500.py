@@ -57,6 +57,11 @@ TIERS = ["id_test", "novel_genus", "novel_family", "nonbacterial"]
 GENE_D = Path("/scratch/home/glh52/glm-epinet/DATA/gene_taxa")
 GENE_TIERS = {"id_test": "test", "taxa_out": "taxa_out", "gene_out": "gene_out"}
 GENE_CAP = 25_000
+# MC dropout perturbs only dropout layers that were active during fine-tuning (decided
+# 2026-10-15). NT and hyenaDNA train with every dropout layer at 0.1 (train_base.py calls
+# enable_mc_dropout before training) and CARMANIA has a single head dropout, so nothing is
+# excluded for them; DNABERT-2 fine-tunes with attention-probability dropout 0.0.
+MC_EXCLUDE = {"DNABERT2": (".attention.self.dropout",)}
 GENE_ML = {"NT_transformer": 508, "DNABERT2": 758, "hyenaDNA": 3008, "CARMANIA": 3008}
 NO_LABELS = {"gene_out"}
 FPRS = [0.01, 0.05, 0.10]
@@ -133,6 +138,9 @@ def main():
     ap.add_argument("--out-root", default="results/clean1500_es")
     ap.add_argument("--limit", type=int, default=0, help="smoke test: first N rows of every set")
     ap.add_argument("--backbone", default="NT_transformer", choices=list(BACKBONES))
+    ap.add_argument("--mc-only", action="store_true",
+                    help="recompute only the MC-dropout columns of an existing evaluation (reads and rewrites "
+                         "<out>/scores_*.parquet and the summary CSVs; base and Epinet scores are kept as they are)")
     a = ap.parse_args()
     global FF, AC
     B = a.backbone; HUB, ml, FF, HALF = BACKBONES[B]; AC = B in AUTOCAST
@@ -160,6 +168,7 @@ def main():
     if B == "CARMANIA":
         from nn_proj.models.CARMANIA.model import CarmaniaForSequenceClassification, CarmaniaSequenceClassificationConfig
         cfg = CarmaniaSequenceClassificationConfig.from_pretrained(base_ck)
+        HUB = cfg.encoder_name or HUB   # human or multi-species (prok-genome) encoder, as trained
     else:
         cfg = transformers.AutoConfig.from_pretrained(base_ck, trust_remote_code=True)
     id2lab = {int(k): int(v) for k, v in cfg.id2label.items()}; lab2id = {v: k for k, v in id2lab.items()}
@@ -205,57 +214,74 @@ def main():
     if a.limit:
         sets = {k: v.head(a.limit) for k, v in sets.items()}; val = val.head(a.limit)
 
-    m = base_model()
-    _, Gv = run_base(m, tok, val.sequence.values, ml, a.bs)
-    yv = torch.tensor([lab2id.get(int(l), -1) for l in label_of(val)])
-    keep = yv >= 0
-    T = fit_T(Gv[keep], yv[keep]); print(f"temperature (fit on {int(keep.sum())} val fragments) T = {T:.4f}", flush=True)
-    R, _ = run_base(m, tok, ref.sequence.values, ml, a.bs)
-    Rn = R.numpy().astype(np.float64); rlab = label_of(ref)
-    cls = np.unique(rlab); MU = np.stack([Rn[rlab == c].mean(0) for c in cls])
-    w, V = np.linalg.eigh(np.linalg.pinv(np.cov((Rn - MU[np.searchsorted(cls, rlab)]).T) + 1e-6 * np.eye(Rn.shape[1])))
-    W = V * np.sqrt(np.clip(w, 0, None)); MUw = torch.from_numpy(MU @ W).float().to(DEV); Rd = R.to(DEV)
-
-    S = {}
-    for name, d in sets.items():
-        E, G = run_base(m, tok, d.sequence.values, ml, a.bs)
-        p = torch.softmax(G, -1); pT = torch.softmax(G / T, -1)
-        df = pd.DataFrame({"base_conf": p.max(1).values.numpy(), "base_pred": p.argmax(1).numpy(),
-                           "temp_conf": pT.max(1).values.numpy(),
-                           "msp": -p.max(1).values.numpy(), "energy": -torch.logsumexp(G, 1).numpy(),
-                           "entropy": compute_uncertainty(G)["normalized_total_uncertainty"].numpy()})
-        Xw = torch.from_numpy(E.numpy().astype(np.float64) @ W).float().to(DEV)
-        df["maha"] = np.concatenate([torch.cdist(Xw[i:i + 1024], MUw).pow(2).min(1).values.cpu().numpy() for i in range(0, len(Xw), 1024)])
-        df["knn"] = np.concatenate([(-(E[i:i + 2048].to(DEV) @ Rd.T).max(1).values).cpu().numpy() for i in range(0, len(E), 2048)])
-        S[name] = df
-        print(f"  base pass {name}: {len(df)}", flush=True)
-    if a.base_only:
-        (out / "base_only").mkdir(exist_ok=True)
+    if a.mc_only:
+        # reuse every non-MC score from the existing evaluation, in the same row order
+        T = json.load(open(out / "meta.json"))["T"]; S = {}
         for name, d in sets.items():
+            old = pd.read_parquet(out / f"scores_{name}.parquet")
             meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
-            pd.concat([meta, S[name]], axis=1).to_parquet(out / "base_only" / f"scores_{name}.parquet", index=False)
-        json.dump({"T": T, "base": str(base_ck)}, open(out / "base_only" / "meta.json", "w"))
-        return
-    del m   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
+            assert len(old) == len(meta), f"{name}: {len(old)} stored rows vs {len(meta)} in the set"
+            S[name] = old.drop(columns=list(meta.columns) + ["mc_conf", "mc_pred", "mc_entropy", "mc_epistemic"])
+        mc = base_model(half=False); enable_mc_dropout(mc, p=0.1, exclude=MC_EXCLUDE.get(B, ()))
+        for name, d in sets.items():
+            r = run_sampled(mc, tok, d.sequence.values, ml, a.bs, 10, False)
+            S[name] = S[name].assign(mc_conf=r["conf"], mc_pred=r["pred"], mc_entropy=r["ent"], mc_epistemic=r["epi"])
+            meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+            pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
+            print(f"  mc pass {name}: {len(d)}", flush=True)
+        del mc
+    else:
+        m = base_model()
+        _, Gv = run_base(m, tok, val.sequence.values, ml, a.bs)
+        yv = torch.tensor([lab2id.get(int(l), -1) for l in label_of(val)])
+        keep = yv >= 0
+        T = fit_T(Gv[keep], yv[keep]); print(f"temperature (fit on {int(keep.sum())} val fragments) T = {T:.4f}", flush=True)
+        R, _ = run_base(m, tok, ref.sequence.values, ml, a.bs)
+        Rn = R.numpy().astype(np.float64); rlab = label_of(ref)
+        cls = np.unique(rlab); MU = np.stack([Rn[rlab == c].mean(0) for c in cls])
+        w, V = np.linalg.eigh(np.linalg.pinv(np.cov((Rn - MU[np.searchsorted(cls, rlab)]).T) + 1e-6 * np.eye(Rn.shape[1])))
+        W = V * np.sqrt(np.clip(w, 0, None)); MUw = torch.from_numpy(MU @ W).float().to(DEV); Rd = R.to(DEV)
 
-    mc = base_model(half=False); enable_mc_dropout(mc, p=0.1)
-    for name, d in sets.items():
-        r = run_sampled(mc, tok, d.sequence.values, ml, a.bs, 10, False)
-        S[name] = S[name].assign(mc_conf=r["conf"], mc_pred=r["pred"], mc_entropy=r["ent"], mc_epistemic=r["epi"])
-    del mc   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
-    bm = base_model(half=False)
-    vs = len(tok) if B == "CARMANIA" else cfg.vocab_size   # as in each backbone's train_epinet.py
-    wrap = EpinetWrapper(bm, FF, EpinetConfig(num_classes=cfg.num_labels, include_inputs=True,
-                                              vocab_size=vs), epinet=MLPEpinetWithConvPrior)
-    em = HFEpinetSeqClassifier(wrap, k_train=8, k_eval=8).to(DEV)
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):   # flash-attn needs fp16
-        em(**{k: v.to(DEV) for k, v in tok("ACGT", padding="max_length", max_length=ml, return_tensors="pt").items()})
-    em.load_state_dict(load_weights(epi_ck), strict=True); em.eval()
-    for name, d in sets.items():
-        r = run_sampled(em, tok, d.sequence.values, ml, a.bs, 16, True)
-        S[name] = S[name].assign(epi_conf=r["conf"], epi_pred=r["pred"], epi_entropy=r["ent"], epi_epistemic=r["epi"])
-        meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
-        pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
+        S = {}
+        for name, d in sets.items():
+            E, G = run_base(m, tok, d.sequence.values, ml, a.bs)
+            p = torch.softmax(G, -1); pT = torch.softmax(G / T, -1)
+            df = pd.DataFrame({"base_conf": p.max(1).values.numpy(), "base_pred": p.argmax(1).numpy(),
+                               "temp_conf": pT.max(1).values.numpy(),
+                               "msp": -p.max(1).values.numpy(), "energy": -torch.logsumexp(G, 1).numpy(),
+                               "entropy": compute_uncertainty(G)["normalized_total_uncertainty"].numpy()})
+            Xw = torch.from_numpy(E.numpy().astype(np.float64) @ W).float().to(DEV)
+            df["maha"] = np.concatenate([torch.cdist(Xw[i:i + 1024], MUw).pow(2).min(1).values.cpu().numpy() for i in range(0, len(Xw), 1024)])
+            df["knn"] = np.concatenate([(-(E[i:i + 2048].to(DEV) @ Rd.T).max(1).values).cpu().numpy() for i in range(0, len(E), 2048)])
+            S[name] = df
+            print(f"  base pass {name}: {len(df)}", flush=True)
+        if a.base_only:
+            (out / "base_only").mkdir(exist_ok=True)
+            for name, d in sets.items():
+                meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+                pd.concat([meta, S[name]], axis=1).to_parquet(out / "base_only" / f"scores_{name}.parquet", index=False)
+            json.dump({"T": T, "base": str(base_ck)}, open(out / "base_only" / "meta.json", "w"))
+            return
+        del m   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
+
+        mc = base_model(half=False); enable_mc_dropout(mc, p=0.1, exclude=MC_EXCLUDE.get(B, ()))
+        for name, d in sets.items():
+            r = run_sampled(mc, tok, d.sequence.values, ml, a.bs, 10, False)
+            S[name] = S[name].assign(mc_conf=r["conf"], mc_pred=r["pred"], mc_entropy=r["ent"], mc_epistemic=r["epi"])
+        del mc   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
+        bm = base_model(half=False)
+        vs = len(tok) if B == "CARMANIA" else cfg.vocab_size   # as in each backbone's train_epinet.py
+        wrap = EpinetWrapper(bm, FF, EpinetConfig(num_classes=cfg.num_labels, include_inputs=True,
+                                                  vocab_size=vs), epinet=MLPEpinetWithConvPrior)
+        em = HFEpinetSeqClassifier(wrap, k_train=8, k_eval=8).to(DEV)
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):   # flash-attn needs fp16
+            em(**{k: v.to(DEV) for k, v in tok("ACGT", padding="max_length", max_length=ml, return_tensors="pt").items()})
+        em.load_state_dict(load_weights(epi_ck), strict=True); em.eval()
+        for name, d in sets.items():
+            r = run_sampled(em, tok, d.sequence.values, ml, a.bs, 16, True)
+            S[name] = S[name].assign(epi_conf=r["conf"], epi_pred=r["pred"], epi_entropy=r["ent"], epi_epistemic=r["epi"])
+            meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+            pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
 
     # ---- calibration on in-vocabulary fragments
     rows = []

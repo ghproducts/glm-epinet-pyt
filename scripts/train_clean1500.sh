@@ -18,6 +18,9 @@ B=$1; R=$2; S=$3; G=$4
 # PATIENCE (default 3; >0: base model evaluates every half epoch and stops after PATIENCE evaluations
 # without eval-loss improvement; PATIENCE=0 EPOCHS=2 reproduces the old fixed-length recipe)
 EPOCHS=${EPOCHS:-20}; CKPT_ROOT=${CKPT_ROOT:-checkpoints/clean1500_es}; PATIENCE=${PATIENCE:-3}
+# MODEL_ID: pretrained hub id to fine-tune instead of the backbone default (e.g. the multi-species
+# CARMANIA, MsAlEhR/carmania-big-10k-prok-genome); used for both the base model and the Epinet tokenizer
+MODEL_ID=${MODEL_ID:-}
 if [ "$R" = gene_taxa ]; then
   # ~930bp median, up to 13kb; cap at 3000bp (as in the earlier gene_taxa runs: NT 500 tokens)
   D=/scratch/home/glh52/glm-epinet/DATA/gene_taxa; N=437; DATA=(--data_path $D/train.csv --num_labels $N)
@@ -34,7 +37,7 @@ BS=32; GA=1
 # CARMANIA at 3000 tokens runs out of memory at batch 32 (SDPA attention); same effective batch via accumulation
 [ "$R" = gene_taxa ] && [ "$B" = CARMANIA ] && { BS=16; GA=2; }
 OUT=$CKPT_ROOT/$B/$R/seed$S; LOG=logs/$(basename $CKPT_ROOT); mkdir -p $OUT $LOG
-COMMON=("${DATA[@]}"
+COMMON=("${DATA[@]}" ${MODEL_ID:+--model_name_or_path $MODEL_ID}
         --model_max_length $ML --per_device_train_batch_size $BS --per_device_eval_batch_size $BS --gradient_accumulation_steps $GA
         --fp16 --eval_strategy epoch --save_strategy epoch --save_total_limit 1
         --load_best_model_at_end True --warmup_steps 50 --logging_steps 500 --overwrite_output_dir True
