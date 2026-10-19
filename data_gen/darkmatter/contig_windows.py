@@ -9,7 +9,10 @@ import re, sys
 from pathlib import Path
 import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from score_contigs import read_contigs, ASM
+import os
+from score_contigs import read_contigs
+# assemblies from assemble.sh (v2 = mates paired correctly; the first set used ~15% of the reads)
+ASM = Path(os.environ.get("DM_ASM", "/scratch/home/glh52/darkmatter_assembly_v2"))
 L = 1500
 rows = []
 for d in sorted(ASM.glob("up*_s*")):

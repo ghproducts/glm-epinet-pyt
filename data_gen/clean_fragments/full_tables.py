@@ -14,14 +14,23 @@ import argparse, glob, re
 import numpy as np, pandas as pd
 from scipy import stats
 from sklearn.metrics import roc_auc_score
-ap = argparse.ArgumentParser(); ap.add_argument("--root", default="results/clean1500_es"); A = ap.parse_args()
-SC = ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "epi_epistemic", "maha", "knn"]
+ap = argparse.ArgumentParser(); ap.add_argument("--root", default="results/clean1500_es")
+ap.add_argument("--extra-root", action="append", default=[],
+                help="PATH:LABEL, e.g. results/clean1500_es_carmania_prok:CARMANIA-prok (runs filed under that backbone label)")
+A = ap.parse_args()
+SC = ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "epi_epistemic",
+      "lap_entropy", "lap_epistemic", "cp_size", "maha", "knn"]   # scores missing from a run are skipped
 FPRS = [0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.50]
-cal, det, dmr = [], [], []
-for d in sorted(glob.glob(f"{A.root}/*_s[0-9]*")):
+cal, det, dmr, cfm = [], [], [], []
+runs = [(d, None) for d in sorted(glob.glob(f"{A.root}/*_s[0-9]*"))]
+for e in A.extra_root:
+    path, label = e.split(":"); runs += [(d, label) for d in sorted(glob.glob(f"{path}/*_s[0-9]*"))]
+for d, label in runs:
     m = re.search(r"/(\w+?)_(phylum|family|gene_taxa)_s(\d+)$", d)
     if not m or not glob.glob(f"{d}/detection.csv"): continue
-    b, r, s = m.group(1), m.group(2), int(m.group(3)); key = dict(backbone=b, rank=r, seed=s)
+    b, r, s = label or m.group(1), m.group(2), int(m.group(3)); key = dict(backbone=b, rank=r, seed=s)
+    if glob.glob(f"{d}/conformal.csv"):
+        cfm.append(pd.read_csv(f"{d}/conformal.csv").assign(**key))
     c = pd.read_csv(f"{d}/calibration.csv")
     c["error"] = c.set.str.extract(r"_err([\d.]+)$")[0].fillna("0"); c["set"] = c.set.str.replace(r"_err[\d.]+$", "", regex=True)
     cal.append(c.assign(**key))
@@ -29,7 +38,7 @@ for d in sorted(glob.glob(f"{A.root}/*_s[0-9]*")):
     if not glob.glob(f"{d}/scores_darkmatter.parquet"):
         continue   # gene_taxa runs have no dark matter evaluation
     dm = pd.read_parquet(f"{d}/scores_darkmatter.parquet"); idt = pd.read_parquet(f"{d}/scores_id_test.parquet")
-    for sc in SC:
+    for sc in [x for x in SC if x in dm.columns and x in idt.columns]:
         auc = {f"auroc_up{u}": roc_auc_score(np.r_[np.zeros(len(idt)), np.ones((dm.up == u).sum())], np.r_[idt[sc], dm[sc][dm.up == u]])
                for u in (0.25, 0.75, 1.0)}
         for f in FPRS:
@@ -53,4 +62,6 @@ M["n_sig_pos"] = dmr.assign(z=(dmr.p < 0.05) & (dmr.slope > 0)).groupby(["backbo
 M["n_increasing"] = dmr.groupby(["backbone", "rank", "score", "fpr"]).increasing.sum().values
 C.to_csv(f"{A.root}/full_calibration.csv", index=False); D.to_csv(f"{A.root}/full_detection.csv", index=False)
 M.to_csv(f"{A.root}/full_darkmatter.csv", index=False)
+if cfm:
+    pd.concat(cfm).to_csv(f"{A.root}/full_conformal.csv", index=False)
 print("seeds:", cal.groupby(["backbone", "rank"]).seed.nunique().to_dict())

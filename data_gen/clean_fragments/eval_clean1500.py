@@ -123,6 +123,127 @@ def fit_T(logits, y):
     opt.step(cl); return float(lt.exp())
 
 
+EXTRA_META = {}          # method settings recorded into meta.json by the column-only modes
+LAPLACE_FIT, LAPLACE_TUNE, K_LAPLACE = 20_000, 5_000, 16
+LAPLACE_PRIORS = (0.01, 0.1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5)
+CONFORMAL_ALPHA = 0.1
+
+
+def ref_for_laplace(a, gene, tr):
+    """Training fragments for the Laplace curvature fit (labels unused) -- the training split, never val/test."""
+    if gene:
+        return tr
+    return pd.read_csv(D / "train.csv", usecols=["sequence", "taxid"])
+
+
+def posthoc_columns(a, B, base_model, tok, ml, sets, S, val, label_of, lab2id, cfg, gene, train_df):
+    """Last-layer diagonal Laplace (nn_proj.models.laplace) and split conformal prediction
+    (nn_proj.common.conformal, LAC score 1 - p_true) on the base model, from one pass per set.
+
+    Laplace: curvature from LAPLACE_FIT training fragments, rescaled to the full training set;
+    prior precision chosen by predictive NLL on LAPLACE_TUNE validation fragments (held out
+    from training). Conformal: threshold from the validation fragments, alpha = 0.1."""
+    import datasets as hfds
+    from nn_proj.common.datasets import prep_for_trainer
+    from nn_proj.common.conformal import score_nonconformity, fit_conformal_threshold, predict_sets
+    from nn_proj.models.laplace import LaplaceConfig, LaplaceSeqClassifier
+    from nn_proj.models.laplace.laplace_head import fit_diagonal_ggn
+    m = base_model(half=False)
+    num = cfg.num_labels
+    attr = [n for n, x in m.named_modules() if isinstance(x, torch.nn.Linear) and x.out_features == num][-1]
+    def hf(df, n=None):
+        y = [lab2id.get(int(l), -1) for l in label_of(df)]
+        d = df.assign(labels=y)[["sequence", "labels"]]
+        d = d[d.labels >= 0]
+        if n: d = d.sample(min(n, len(d)), random_state=1)
+        ds, coll = prep_for_trainer(hfds.Dataset.from_pandas(d.reset_index(drop=True)), tok, max_length=ml)
+        return ds, coll
+    train_df = train_df.sample(frac=1, random_state=2).reset_index(drop=True)       # fit order = random
+    fit_ds, fit_coll = hf(train_df.head(LAPLACE_FIT))
+    lcfg = LaplaceConfig(classifier_attr=attr, max_examples=None)
+    with torch.autocast("cuda", dtype=torch.float16, enabled=AC):
+        w_ggn, b_ggn, n_seen = fit_diagonal_ggn(m, fit_ds, fit_coll, lcfg, batch_size=a.bs)
+    # curvature of the fitted subset, rescaled to the full training set: posterior precision = prior + N * mean GGN
+    scale = len(train_df) / max(n_seen, 1); w_ggn = w_ggn * scale; b_ggn = b_ggn * scale
+    yv = np.array([lab2id.get(int(l), -1) for l in label_of(val)]); keep = yv >= 0
+    vt = val[keep].sample(min(LAPLACE_TUNE, int(keep.sum())), random_state=1)
+    yt = torch.tensor([lab2id[int(l)] for l in label_of(vt)])
+    def make(prior):
+        return LaplaceSeqClassifier(m, 1.0 / (prior + w_ggn), 1.0 / (prior + b_ggn), classifier_attr=attr).to(DEV).eval()
+    def logits_and_samples(lap, seqs, k=K_LAPLACE):
+        G, ST = [], []
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):
+            for b in batches(tok, seqs, ml, a.bs):
+                b.pop("token_type_ids", None) if B == "hyenaDNA" else None
+                G.append(lap(**b)["logits"].float().cpu()); ST.append(lap.sample_logits(k).float().cpu())
+        return torch.cat(G), torch.cat(ST, 1)
+    # prior precision: minimum MC-predictive NLL on held-out validation fragments
+    nll = {}
+    for prior in LAPLACE_PRIORS:
+        _, st = logits_and_samples(make(prior), vt.sequence.values, k=32)
+        pm = st.softmax(-1).mean(0)
+        nll[prior] = float(torch.nn.functional.nll_loss(torch.log(pm.clamp_min(1e-12)), yt))
+    best = min(nll, key=nll.get); lap = make(best)
+    print(f"  laplace: head {attr}, prior precision {best}, val NLL {nll}, fit {n_seen} scaled to {len(train_df)}", flush=True)
+    # conformal threshold on validation fragments (exchangeable with id_test: held-out regions of training genomes)
+    Gv, _ = logits_and_samples(lap, val.sequence.values[keep])
+    qhat = fit_conformal_threshold(score_nonconformity(Gv.softmax(-1), torch.tensor(yv[keep])), alpha=CONFORMAL_ALPHA)
+    print(f"  conformal: qhat {qhat:.4f} from {int(keep.sum())} val fragments", flush=True)
+    EXTRA_META.update(laplace_prior_precision=best, laplace_val_nll={str(k): v for k, v in nll.items()},
+                      laplace_fit_examples=n_seen, laplace_train_size=len(train_df), laplace_head=attr, laplace_k=K_LAPLACE,
+                      conformal_alpha=CONFORMAL_ALPHA, conformal_qhat=float(qhat), conformal_score="lac", conformal_cal="val")
+    for name, d in sets.items():
+        G, ST = logits_and_samples(lap, d.sequence.values)
+        u = compute_uncertainty(ST)
+        sz = predict_sets(G.softmax(-1), qhat, method="score")
+        labeled = name not in NO_LABELS and name != "darkmatter"     # dark matter windows have no taxon labels
+        y = np.array([lab2id.get(int(l), -1) for l in label_of(d)]) if labeled else np.full(len(d), -1)
+        hit = sz[torch.arange(len(d)), torch.as_tensor(np.clip(y, 0, None), dtype=torch.long)].numpy().astype(float)
+        cov = np.where(y >= 0, hit, np.nan)
+        S[name] = S[name].assign(lap_conf=u["max_confidence"].numpy(), lap_pred=u["predicted_class"].numpy(),
+                                 lap_entropy=u["normalized_total_uncertainty"].numpy(),
+                                 lap_epistemic=u["normalized_epistemic_uncertainty"].numpy(),
+                                 cp_size=sz.sum(-1).numpy().astype(float), cp_covered=cov)
+        print(f"  laplace+conformal pass {name}: {len(d)}", flush=True)
+    del lap, m
+
+
+def evidential_columns(a, B, HUB, cfg, ck_dir, tok, ml, sets, S):
+    """Evidential model (nn_proj.models.evidential) from <ckpt>/evidential: Dirichlet mean probability
+    (evid_conf/pred), its normalized entropy, and vacuity C/S."""
+    from nn_proj.models.evidential import EvidentialConfig, EvidentialWrapper, HFEvidentialSeqClassifier
+    d0 = ck_dir / "evidential"
+    last = sorted(d0.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
+    best = json.load(open(last / "trainer_state.json")).get("best_model_checkpoint")
+    ck = Path(best) if best and Path(best).is_dir() else last
+    ecfg = EvidentialConfig(num_classes=cfg.num_labels)          # defaults = the training defaults
+    if B == "CARMANIA":
+        from nn_proj.models.CARMANIA.model import CarmaniaForSequenceClassification
+        base = CarmaniaForSequenceClassification(cfg)
+    else:
+        base = transformers.AutoModelForSequenceClassification.from_pretrained(HUB, config=cfg, trust_remote_code=True)
+    if B == "DNABERT2":
+        from nn_proj.common.utils import disable_dnabert2_flash_attn; disable_dnabert2_flash_attn()
+    model = HFEvidentialSeqClassifier(EvidentialWrapper(base, ecfg))
+    model.load_state_dict(load_weights(ck), strict=True); model = model.to(DEV).eval()
+    EXTRA_META.update(evidential_checkpoint=str(ck), evidential_activation=ecfg.evidence_activation,
+                      evidential_loss=ecfg.loss_type, evidential_annealing_step=ecfg.annealing_step)
+    print(f"  evidential checkpoint: {ck}", flush=True)
+    for name, d in sets.items():
+        out = {"conf": [], "pred": [], "ent": [], "vac": []}
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):
+            for b in batches(tok, d.sequence.values, ml, a.bs):
+                b.pop("token_type_ids", None) if B == "hyenaDNA" else None
+                ev = model(**b)["logits"].float(); alpha = ev + 1.0; Ssum = alpha.sum(-1, keepdim=True); p = alpha / Ssum
+                u = compute_uncertainty(torch.log(p.clamp_min(1e-12)).unsqueeze(0))
+                out["conf"].append(u["max_confidence"].cpu()); out["pred"].append(u["predicted_class"].cpu())
+                out["ent"].append(u["normalized_total_uncertainty"].cpu()); out["vac"].append((cfg.num_labels / Ssum.squeeze(-1)).cpu())
+        o = {k: torch.cat(v).numpy() for k, v in out.items()}
+        S[name] = S[name].assign(evid_conf=o["conf"], evid_pred=o["pred"], evid_entropy=o["ent"], evid_vacuity=o["vac"])
+        print(f"  evidential pass {name}: {len(d)}", flush=True)
+    del model
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rank", required=True, choices=["phylum", "family", "gene_taxa"])
@@ -141,6 +262,15 @@ def main():
     ap.add_argument("--mc-only", action="store_true",
                     help="recompute only the MC-dropout columns of an existing evaluation (reads and rewrites "
                          "<out>/scores_*.parquet and the summary CSVs; base and Epinet scores are kept as they are)")
+    ap.add_argument("--epinet-only", action="store_true",
+                    help="same, for the Epinet columns (e.g. after retraining the heads); base and MC scores are kept")
+    ap.add_argument("--posthoc-only", action="store_true",
+                    help="add last-layer Laplace (lap_*) and split-conformal (cp_*) columns to an existing evaluation")
+    ap.add_argument("--darkmatter-only", action="store_true",
+                    help="rescore only the dark matter windows with every method (base, MC, Epinet, Laplace, conformal), "
+                         "e.g. after rebuilding them; the other sets' stored scores are reused unchanged")
+    ap.add_argument("--evidential-only", action="store_true",
+                    help="add evidential (evid_*) columns from <ckpt>/evidential to an existing evaluation")
     a = ap.parse_args()
     global FF, AC
     B = a.backbone; HUB, ml, FF, HALF = BACKBONES[B]; AC = B in AUTOCAST
@@ -152,7 +282,7 @@ def main():
         best = json.load(open(last / "trainer_state.json")).get("best_model_checkpoint")
         return Path(best) if best and Path(best).is_dir() else last
     base_ck = best_ck(ck_dir / "base")
-    epi_ck = best_ck(ck_dir / "epinet")
+    epi_ck = best_ck(ck_dir / "epinet") if (ck_dir / "epinet").is_dir() else None
     out = Path(f"{a.out_root}/{B}_{a.rank}_s{a.seed}"); out.mkdir(parents=True, exist_ok=True)
 
     GENE = a.rank == "gene_taxa"
@@ -214,22 +344,49 @@ def main():
     if a.limit:
         sets = {k: v.head(a.limit) for k, v in sets.items()}; val = val.head(a.limit)
 
-    if a.mc_only:
-        # reuse every non-MC score from the existing evaluation, in the same row order
+    if a.posthoc_only or a.evidential_only:
         T = json.load(open(out / "meta.json"))["T"]; S = {}
         for name, d in sets.items():
             old = pd.read_parquet(out / f"scores_{name}.parquet")
             meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
             assert len(old) == len(meta), f"{name}: {len(old)} stored rows vs {len(meta)} in the set"
-            S[name] = old.drop(columns=list(meta.columns) + ["mc_conf", "mc_pred", "mc_entropy", "mc_epistemic"])
-        mc = base_model(half=False); enable_mc_dropout(mc, p=0.1, exclude=MC_EXCLUDE.get(B, ()))
+            pre = ("lap_", "cp_") if a.posthoc_only else ("evid_",)
+            S[name] = old.drop(columns=list(meta.columns) + [c for c in old.columns if c.startswith(pre)])
+        if a.posthoc_only:
+            posthoc_columns(a, B, base_model, tok, ml, sets, S, val, label_of, lab2id, cfg, GENE, ref_for_laplace(a, GENE, tr if GENE else None))
+        else:
+            evidential_columns(a, B, HUB, cfg, ck_dir, tok, ml, sets, S)
         for name, d in sets.items():
-            r = run_sampled(mc, tok, d.sequence.values, ml, a.bs, 10, False)
-            S[name] = S[name].assign(mc_conf=r["conf"], mc_pred=r["pred"], mc_entropy=r["ent"], mc_epistemic=r["epi"])
             meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
             pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
-            print(f"  mc pass {name}: {len(d)}", flush=True)
-        del mc
+    elif a.mc_only or a.epinet_only:
+        # reuse every other score from the existing evaluation, in the same row order
+        pre = "mc" if a.mc_only else "epi"; redo = [f"{pre}_{c}" for c in ("conf", "pred", "entropy", "epistemic")]
+        T = json.load(open(out / "meta.json"))["T"]; S = {}
+        for name, d in sets.items():
+            old = pd.read_parquet(out / f"scores_{name}.parquet")
+            meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+            assert len(old) == len(meta), f"{name}: {len(old)} stored rows vs {len(meta)} in the set"
+            S[name] = old.drop(columns=list(meta.columns) + redo)
+        if a.mc_only:
+            sm = base_model(half=False); enable_mc_dropout(sm, p=0.1, exclude=MC_EXCLUDE.get(B, ())); K, EPI = 10, False
+        else:
+            bm = base_model(half=False)
+            vs = len(tok) if B == "CARMANIA" else cfg.vocab_size   # as in each backbone's train_epinet.py
+            wrap = EpinetWrapper(bm, FF, EpinetConfig(num_classes=cfg.num_labels, include_inputs=True,
+                                                      vocab_size=vs), epinet=MLPEpinetWithConvPrior)
+            sm = HFEpinetSeqClassifier(wrap, k_train=8, k_eval=8).to(DEV)
+            with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):   # flash-attn needs fp16
+                sm(**{k: v.to(DEV) for k, v in tok("ACGT", padding="max_length", max_length=ml, return_tensors="pt").items()})
+            sm.load_state_dict(load_weights(epi_ck), strict=True); sm.eval(); K, EPI = 16, True
+            print(f"  epinet checkpoint: {epi_ck}", flush=True)
+        for name, d in sets.items():
+            r = run_sampled(sm, tok, d.sequence.values, ml, a.bs, K, EPI)
+            S[name] = S[name].assign(**{redo[0]: r["conf"], redo[1]: r["pred"], redo[2]: r["ent"], redo[3]: r["epi"]})
+            meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+            pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
+            print(f"  {pre} pass {name}: {len(d)}", flush=True)
+        del sm
     else:
         m = base_model()
         _, Gv = run_base(m, tok, val.sequence.values, ml, a.bs)
@@ -243,7 +400,8 @@ def main():
         W = V * np.sqrt(np.clip(w, 0, None)); MUw = torch.from_numpy(MU @ W).float().to(DEV); Rd = R.to(DEV)
 
         S = {}
-        for name, d in sets.items():
+        todo = {"darkmatter": sets["darkmatter"]} if a.darkmatter_only else sets
+        for name, d in todo.items():
             E, G = run_base(m, tok, d.sequence.values, ml, a.bs)
             p = torch.softmax(G, -1); pT = torch.softmax(G / T, -1)
             df = pd.DataFrame({"base_conf": p.max(1).values.numpy(), "base_pred": p.argmax(1).numpy(),
@@ -265,7 +423,7 @@ def main():
         del m   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
 
         mc = base_model(half=False); enable_mc_dropout(mc, p=0.1, exclude=MC_EXCLUDE.get(B, ()))
-        for name, d in sets.items():
+        for name, d in todo.items():
             r = run_sampled(mc, tok, d.sequence.values, ml, a.bs, 10, False)
             S[name] = S[name].assign(mc_conf=r["conf"], mc_pred=r["pred"], mc_entropy=r["ent"], mc_epistemic=r["epi"])
         del mc   # no empty_cache(): keep the freed memory reserved, or other users' jobs take it between phases
@@ -277,11 +435,23 @@ def main():
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=AC):   # flash-attn needs fp16
             em(**{k: v.to(DEV) for k, v in tok("ACGT", padding="max_length", max_length=ml, return_tensors="pt").items()})
         em.load_state_dict(load_weights(epi_ck), strict=True); em.eval()
-        for name, d in sets.items():
+        for name, d in todo.items():
             r = run_sampled(em, tok, d.sequence.values, ml, a.bs, 16, True)
             S[name] = S[name].assign(epi_conf=r["conf"], epi_pred=r["pred"], epi_entropy=r["ent"], epi_epistemic=r["epi"])
             meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
             pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
+        del em
+        if a.darkmatter_only:
+            # Laplace + conformal for the new windows (same fit, prior selection and val threshold as --posthoc-only)
+            posthoc_columns(a, B, base_model, tok, ml, todo, S, val, label_of, lab2id, cfg, GENE, ref_for_laplace(a, GENE, None))
+            dmeta = sets["darkmatter"].drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+            pd.concat([dmeta, S["darkmatter"]], axis=1).to_parquet(out / "scores_darkmatter.parquet", index=False)
+            for name, d in sets.items():          # every other set: stored scores, unchanged
+                if name == "darkmatter": continue
+                old = pd.read_parquet(out / f"scores_{name}.parquet")
+                meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+                assert len(old) == len(meta), f"{name}: {len(old)} stored rows vs {len(meta)} in the set"
+                S[name] = old.drop(columns=list(meta.columns))
 
     # ---- calibration on in-vocabulary fragments
     rows = []
@@ -289,15 +459,31 @@ def main():
         d, sc = sets[name], S[name]
         y = np.array([lab2id.get(int(l), -1) for l in label_of(d)]); iv = y >= 0
         if iv.mean() < 0.5: continue
-        for meth, cc, pc in [("softmax", "base_conf", "base_pred"), ("temperature", "temp_conf", "base_pred"),
-                             ("mc_dropout", "mc_conf", "mc_pred"), ("epinet", "epi_conf", "epi_pred")]:
+        for meth, cc, pc in [m for m in [("softmax", "base_conf", "base_pred"), ("temperature", "temp_conf", "base_pred"),
+                             ("mc_dropout", "mc_conf", "mc_pred"), ("epinet", "epi_conf", "epi_pred"),
+                             ("laplace", "lap_conf", "lap_pred"), ("evidential", "evid_conf", "evid_pred")] if m[1] in sc]:
             corr = (sc[pc].values[iv] == y[iv]).astype(float); conf = sc[cc].values[iv]
             rows.append(dict(set=name, method=meth, n=int(iv.sum()), oov=float(1 - iv.mean()),
                              accuracy=corr.mean(), ece=ece(conf, corr)))
     pd.DataFrame(rows).to_csv(out / "calibration.csv", index=False)
 
+    # ---- split conformal: coverage and set size per set (calibrated on val; alpha in meta.json)
+    if "cp_size" in S["id_test"]:
+        rows = []
+        for name in [k for k in sets if k != "darkmatter"]:
+            sc = S[name]; cov = sc["cp_covered"].values
+            rows.append(dict(set=name, n=len(sc), mean_set_size=sc["cp_size"].mean(), median_set_size=sc["cp_size"].median(),
+                             frac_singleton=(sc["cp_size"] == 1).mean(), frac_empty=(sc["cp_size"] == 0).mean(),
+                             # coverage only where the labels are mostly in-vocabulary (same rule as calibration):
+                             # e.g. the few non-bacterial reads whose label collides with a training class are not ID
+                             coverage=np.nanmean(cov) if np.isfinite(cov).mean() >= 0.5 else np.nan,
+                             n_labeled=int(np.isfinite(cov).sum())))
+        pd.DataFrame(rows).to_csv(out / "conformal.csv", index=False)
+
     # ---- detection: id_test vs each tier (and matched error level)
-    SC = ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "epi_epistemic", "maha", "knn"]
+    SC = [s for s in ["msp", "energy", "entropy", "mc_entropy", "mc_epistemic", "epi_entropy", "epi_epistemic",
+                      "lap_entropy", "lap_epistemic", "cp_size", "evid_entropy", "evid_vacuity", "maha", "knn"]
+          if s in S["id_test"]]
     rows = []
     for suf in ["", "_err0.5", "_err5"] if a.error_sweep else [""]:
         idn = f"id_test{suf}"
@@ -329,7 +515,11 @@ def main():
                 f"up{u}": roc_auc_score(np.r_[np.zeros(len(si)), np.ones((dm.up == u).sum())], np.r_[si, dm[s][dm.up == u]])
                 for u in sorted(dm.up.unique())}))
         pd.DataFrame(rows).to_csv(out / "darkmatter.csv", index=False)
-    json.dump({"T": T, "base": str(base_ck), "epinet": str(epi_ck)}, open(out / "meta.json", "w"))
+    mp = out / "meta.json"; md = json.load(open(mp)) if mp.exists() else {}
+    md.update({"T": T, "base": str(base_ck)})
+    if epi_ck is not None and not (a.posthoc_only or a.evidential_only): md["epinet"] = str(epi_ck)
+    md.update(EXTRA_META)
+    json.dump(md, open(mp, "w"), indent=1)
     print("DONE", out, flush=True)
 
 

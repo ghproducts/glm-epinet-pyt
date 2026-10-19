@@ -21,6 +21,9 @@ EPOCHS=${EPOCHS:-20}; CKPT_ROOT=${CKPT_ROOT:-checkpoints/clean1500_es}; PATIENCE
 # MODEL_ID: pretrained hub id to fine-tune instead of the backbone default (e.g. the multi-species
 # CARMANIA, MsAlEhR/carmania-big-10k-prok-genome); used for both the base model and the Epinet tokenizer
 MODEL_ID=${MODEL_ID:-}
+# Epinet: early stopping too (decided 2026-10-17; 2 fixed epochs left e.g. the multi-species CARMANIA
+# gene-task head unconverged). EPI_EPOCHS = cap, EPI_PATIENCE = evaluations without improvement.
+EPI_EPOCHS=${EPI_EPOCHS:-20}; EPI_PATIENCE=${EPI_PATIENCE:-3}
 if [ "$R" = gene_taxa ]; then
   # ~930bp median, up to 13kb; cap at 3000bp (as in the earlier gene_taxa runs: NT 500 tokens)
   D=/scratch/home/glh52/glm-epinet/DATA/gene_taxa; N=437; DATA=(--data_path $D/train.csv --num_labels $N)
@@ -45,6 +48,17 @@ COMMON=("${DATA[@]}" ${MODEL_ID:+--model_name_or_path $MODEL_ID}
 ES=()
 [ "$PATIENCE" -gt 0 ] && ES=(--eval_strategy steps --eval_steps $HALF --save_strategy steps --save_steps $HALF
                             --early_stopping_patience $PATIENCE --metric_for_best_model eval_loss --greater_is_better False)
+# EVIDENTIAL=1: train only the evidential model (Sensoy et al. 2018) into $OUT/evidential -- a separate
+# full fine-tune from the pretrained backbone with the Dirichlet loss, same lr/batch/early stopping as the
+# base model (its validation loss is computed at full KL weight; see train_evidential.py) -- then exit.
+if [ "${EVIDENTIAL:-0}" = 1 ]; then
+  echo "[$(date +%T)] evidential $B $R seed$S gpu$G epochs<=$EPOCHS patience=$PATIENCE"
+  CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_evidential "${COMMON[@]}" --learning_rate 2e-5 --num_train_epochs $EPOCHS "${ES[@]}" \
+    --run_name c1500_evid_${B}_${R}_s$S --output_dir $OUT/evidential > $LOG/${B}_${R}_s${S}_evidential.log 2>&1
+  ls -d $OUT/evidential/checkpoint-* >/dev/null 2>&1 && echo "[$(date +%T)] DONE evidential $B $R seed$S" \
+    || echo "[$(date +%T)] FAILED evidential $B $R seed$S"
+  exit 0
+fi
 # SKIP_BASE=1: base model already trained in $OUT/base (e.g. resuming after an interruption); go to the Epinet
 [ "${SKIP_BASE:-0}" = 1 ] || { echo "[$(date +%T)] base $B $R seed$S gpu$G epochs<=$EPOCHS patience=$PATIENCE"
 CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_base "${COMMON[@]}" --learning_rate 2e-5 --num_train_epochs $EPOCHS "${ES[@]}" \
@@ -54,7 +68,10 @@ LAST=$(ls -d $OUT/base/checkpoint-* 2>/dev/null | sort -V | tail -1)
 CK=$([ -n "$LAST" ] && python -c "import json,sys; print(json.load(open('$LAST/trainer_state.json')).get('best_model_checkpoint') or '$LAST')")
 [ -z "$CK" ] && { echo "[$(date +%T)] FAILED base $B $R seed$S"; exit 1; }
 echo "[$(date +%T)] base done -> $CK; epinet"
-CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_epinet "${COMMON[@]}" --learning_rate 1e-3 --num_train_epochs 2 \
+EPI_ES=()
+[ "$EPI_PATIENCE" -gt 0 ] && EPI_ES=(--eval_strategy steps --eval_steps $HALF --save_strategy steps --save_steps $HALF
+                                    --early_stopping_patience $EPI_PATIENCE --metric_for_best_model eval_loss --greater_is_better False)
+CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_epinet "${COMMON[@]}" --learning_rate 1e-3 --num_train_epochs $EPI_EPOCHS "${EPI_ES[@]}" \
   --checkpoint $CK --run_name c1500_epi_${B}_${R}_s$S --output_dir $OUT/epinet > $LOG/${B}_${R}_s${S}_epinet.log 2>&1
 EK=$(ls -d $OUT/epinet/checkpoint-* 2>/dev/null | sort -V | tail -1)
 [ -z "$EK" ] && { echo "[$(date +%T)] FAILED epinet $B $R seed$S"; exit 1; }

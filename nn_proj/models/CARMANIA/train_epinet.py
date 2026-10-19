@@ -149,7 +149,9 @@ def train():
     print(f"{len(trainable)} trainable tensors:", trainable[:10], "...")
 
     # trainer
-    trainer = transformers.Trainer(model=model,
+    trainer = transformers.Trainer(callbacks=([transformers.EarlyStoppingCallback(training_args.early_stopping_patience)]
+                                              if training_args.early_stopping_patience > 0 else None),
+                                   model=model,
                                    tokenizer=tokenizer,
                                    args=training_args,
                                    preprocess_logits_for_metrics=preprocess_logits_for_metrics,

@@ -89,7 +89,8 @@ class EvidentialTrainer(transformers.Trainer):
             evidence,
             labels,
             num_classes=self.evidential_cfg.num_classes,
-            epoch=self.state.epoch or 0.0,
+            # validation loss at full KL weight, so it is comparable across epochs (early stopping)
+            epoch=(self.state.epoch or 0.0) if model.training else float(self.evidential_cfg.annealing_step),
             annealing_step=self.evidential_cfg.annealing_step,
             loss_type=self.evidential_cfg.loss_type,
         )
@@ -164,6 +165,8 @@ def train():
     model = HFEvidentialSeqClassifier(wrapper)
 
     trainer = EvidentialTrainer(
+        callbacks=([transformers.EarlyStoppingCallback(training_args.early_stopping_patience)]
+                   if training_args.early_stopping_patience > 0 else None),
         model=model,
         tokenizer=tokenizer,
         args=training_args,
