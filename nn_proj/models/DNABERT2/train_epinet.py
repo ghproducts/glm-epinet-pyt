@@ -17,6 +17,23 @@ from nn_proj.models.epinet.feature_fns import NT_feature_fn
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
+    """Collects the state dict and dumps it to output_dir/model.safetensors.
+
+    Same helper train_base.py uses. Without this, the only thing this script
+    wrote was a custom model_epinet.pt pickle -- a different file, in a
+    different format, than what inference.py's epinet branch actually loads
+    (safetensors.torch.load_file(checkpoint/model.safetensors)). Every epinet
+    inference run failed with FileNotFoundError until this was added; found
+    by running the pipeline end to end, not anticipated in
+    docs/MODEL_CODE_FIXES.md. See docs/REVISION_PLAN.md.
+    """
+    state_dict = trainer.model.state_dict()
+    if trainer.args.should_save:
+        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
+        del state_dict
+        trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
+
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -69,6 +86,8 @@ def train():
         num_labels=num_labels,
         trust_remote_code=True,
     )
+    from nn_proj.common.utils import disable_dnabert2_flash_attn
+    disable_dnabert2_flash_attn()   # Triton kernel no longer compiles; same maths in PyTorch
 
     # load checkpoint weights
     state_path = os.path.join(model_args.checkpoint, "model.safetensors")
@@ -80,7 +99,10 @@ def train():
     # combine with epinet to form model
     #epi_cfg = EpinetConfig(num_classes=num_labels)
     #wrapper = EpinetWrapper(model, NT_feature_fn, epi_cfg, epinet=MLPEpinetWithPrior)
-    epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True, vocab_size=config.vocab_size)
+    epi_cfg = EpinetConfig(num_classes=num_labels, include_inputs=True,
+                           vocab_size=config.vocab_size,
+                           prior_scale=model_args.prior_scale,
+                           conv_prior_scale=model_args.conv_prior_scale)
     wrapper = EpinetWrapper(model, NT_feature_fn, epi_cfg, epinet=MLPEpinetWithConvPrior)
     model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=8).to(DEVICE)
 
@@ -114,7 +136,9 @@ def train():
     print(f"{len(trainable)} trainable tensors:", trainable[:10], "...")
 
     # trainer
-    trainer = transformers.Trainer(model=model,
+    trainer = transformers.Trainer(callbacks=([transformers.EarlyStoppingCallback(training_args.early_stopping_patience)]
+                                              if training_args.early_stopping_patience > 0 else None),
+                                   model=model,
                                    tokenizer=tokenizer,
                                    args=training_args,
                                    preprocess_logits_for_metrics=preprocess_logits_for_metrics,
@@ -128,13 +152,16 @@ def train():
     if training_args.save_model:
         trainer.save_state()  # optional: trainer internals
 
-        # Save state dict + metadata so you can rebuild later
+        # output_dir/model.safetensors -- what inference.py actually loads.
+        safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+
+        # Also save state dict + metadata so you can rebuild later
         os.makedirs(training_args.output_dir, exist_ok=True)
         torch.save(
             {
                 "state_dict": model.state_dict(),
                 "base_model_name": model_args.model_name_or_path,
-                "num_labels": train_dataset.features["label"].num_classes,
+                "num_labels": num_labels,  # dataset column is "labels"; features["label"] KeyErrors on local CSVs
                 "epinet_cfg": model.cfg.__dict__,   # EpinetConfig fields
                 "feature_fn": "NT_feature_fn",      # or "NT_tokens_feature_fn"
             },

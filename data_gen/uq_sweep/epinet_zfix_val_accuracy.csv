@@ -1,0 +1,13 @@
+backbone,seed,base_val_acc,epinet_zfix_val_acc,delta_pp,manuscript_base_err,manuscript_epinet_err,manuscript_epinet_penalty_pp
+NT_transformer,1,0.8953,0.896,0.07,13.4,14.2,0.8
+NT_transformer,2,0.8983,0.8987,0.03,13.4,14.2,0.8
+NT_transformer,3,0.9023,0.9027,0.03,13.4,14.2,0.8
+DNABERT2,1,0.884,0.887,0.3,13.9,14.2,0.3
+DNABERT2,2,0.8847,0.8863,0.17,13.9,14.2,0.3
+DNABERT2,3,0.8837,0.8927,0.9,13.9,14.2,0.3
+hyenaDNA,1,0.8633,0.8593,-0.4,15.0,16.5,1.5
+hyenaDNA,2,0.8667,0.8653,-0.13,15.0,16.5,1.5
+hyenaDNA,3,0.87,0.8687,-0.13,15.0,16.5,1.5
+CARMANIA,1,0.869,0.8677,-0.13,14.0,14.7,0.7
+CARMANIA,2,0.8743,0.8717,-0.27,14.0,14.7,0.7
+CARMANIA,3,0.8737,0.8757,0.2,14.0,14.7,0.7

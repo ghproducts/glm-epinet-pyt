@@ -1,0 +1,5 @@
+# per-example sweep output and run logs are regenerable artifacts
+results/
+*.log
+__pycache__/
+summaries/

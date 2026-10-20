@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from safetensors.torch import load_file
 from nn_proj.common.datasets import load_local_dataset, load_NT_tasks, prep_for_trainer
+from nn_proj.common.utils import enable_mc_dropout
 from nn_proj.models.epinet import EpinetConfig, EpinetWrapper, HFEpinetSeqClassifier, MLPEpinetWithPrior, MLPEpinetWithConvPrior, predict
 from nn_proj.models.epinet.feature_fns import NT_feature_fn, NT_first_last_feature_fn
 from .config import ModelArguments, DataArguments, TrainingArguments    
@@ -19,13 +20,6 @@ import torch.nn as nn
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-
-def enable_mc_dropout(model: nn.Module, p: float = 0.1) -> None:
-    """Enable MC dropout exactly like base training: same modules, same p."""
-    model.train()  # same mode as during training
-    for m in model.modules():
-        if isinstance(m, (nn.Dropout, nn.Dropout2d, nn.Dropout3d, nn.AlphaDropout)):
-            m.p = p
 
 def evaluate():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
@@ -69,7 +63,13 @@ def evaluate():
         )
 
     num_labels = data_args.num_labels if data_args.num_labels is not None else task_dataset.features["label"].num_classes
-    task_dataset, data_collator = prep_for_trainer(task_dataset, tokenizer)
+    # Whatever the source CSV carries beyond sequence/label(s) -- e.g.
+    # sequence_id/motif_combo/num_selected_motifs for promoter_motifs,
+    # taxid/split for pbsim -- is real metadata, not a model input. Passing
+    # it through here (and to predict() below) is what actually lands it in
+    # the output CSV; see docs/MODEL_CODE_FIXES.md item 2.3.
+    metadata_cols = [c for c in task_dataset.column_names if c not in ("sequence", "label", "labels")]
+    task_dataset, data_collator = prep_for_trainer(task_dataset, tokenizer, metadata_cols=metadata_cols)
 
     num_labels = config.num_labels if hasattr(config, "num_labels") else num_labels
 
@@ -117,6 +117,7 @@ def evaluate():
         uncertainty_method=model_args.uncertainty_method,
         outfile=outfile,
         temperature=model_args.temperature,
+        metadata_cols=metadata_cols,
     )
 
 
