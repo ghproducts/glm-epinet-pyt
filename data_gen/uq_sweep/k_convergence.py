@@ -22,6 +22,7 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import f1_score
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -32,8 +33,8 @@ sys.path.insert(0, S.REPO)
 from nn_proj.common.utils import compute_uncertainty, enable_mc_dropout  # noqa: E402
 
 K_MAX = 100
-K_GRID = [5, 10, 20, 50, 100]
-OUT = os.path.join(HERE, "summaries")
+K_GRID = [1, 2, 5, 10, 16, 20, 32, 50, 100]
+OUT = os.environ.get("SWEEP_SUMMARIES_DIR") or os.path.join(HERE, "summaries")
 
 
 def ece(conf: np.ndarray, correct: np.ndarray, n_bins: int = 15) -> float:
@@ -44,12 +45,17 @@ def ece(conf: np.ndarray, correct: np.ndarray, n_bins: int = 15) -> float:
         for b in range(n_bins) if (idx == b).any()))
 
 
+def ece_em(conf, correct, n_bins=50):
+    o = np.argsort(conf, kind="stable"); c, a = conf[o], correct[o]; e = np.linspace(0, len(c), n_bins + 1).astype(int)
+    return float(sum((hi - lo) / len(c) * abs(a[lo:hi].mean() - c[lo:hi].mean()) for lo, hi in zip(e[:-1], e[1:]) if hi > lo))
+
+
 @torch.no_grad()
 def draw_stack(bb, ds, seed, method) -> torch.Tensor:
     """[K_MAX, N, C] logits from one pass of the requested stochastic method."""
     if method == "mc_dropout":
         model = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
-        enable_mc_dropout(model, p=R.MC_DROPOUT_P)
+        enable_mc_dropout(model, p=R.MC_DROPOUT_P, exclude=R.MC_EXCLUDE.get(bb.name, ()))
         out = []
         for batch in ds.loader(R.BATCH_SIZE):
             batch.pop("labels", None)
@@ -60,25 +66,10 @@ def draw_stack(bb, ds, seed, method) -> torch.Tensor:
         return torch.cat(out, dim=1)
 
     if method == "laplace":
-        from nn_proj.models.laplace import (LaplaceConfig, LaplaceSeqClassifier,
-                                            fit_diagonal_laplace)
-        base = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
-        attr = S.find_classifier_attr(base)
-        cfg = LaplaceConfig(classifier_attr=attr, prior_precision=R.LAPLACE_PRIOR_PRECISION,
-                            max_examples=R.LAPLACE_FIT_EXAMPLES)
-        fit = S.build_train_subset(bb, ds.tokenizer, max_examples=R.LAPLACE_FIT_EXAMPLES)
-        w, b, _ = fit_diagonal_laplace(base, fit.collate_ds, fit.collator, cfg,
-                                       batch_size=R.BATCH_SIZE)
-        model = LaplaceSeqClassifier(base, w, b, classifier_attr=attr).to(S.DEVICE).eval()
-        out = []
-        for batch in ds.loader(R.BATCH_SIZE):
-            batch.pop("labels", None)
-            batch.pop("label", None)
-            inp = {k: v.to(S.DEVICE) for k, v in batch.items()}
-            model(**inp)
-            out.append(model.sample_logits(K_MAX).float().cpu())
+        model, base, _, _, _ = R.build_laplace(bb, ds, seed)        # same fit as the sweep's laplace cells
+        stacks, _ = R._laplace_sample(model, ds, K_MAX)
         del model, base
-        return torch.cat(out, dim=1)
+        return torch.cat(stacks, dim=1)
 
     if method == "conv_epinet":
         from nn_proj.models.epinet.epinet import (EpinetConfig, EpinetWrapper,
@@ -94,7 +85,7 @@ def draw_stack(bb, ds, seed, method) -> torch.Tensor:
         cfg = (EpinetConfig(**{k: v for k, v in saved.items()
                                if k in EpinetConfig.__dataclass_fields__}) if saved
                else EpinetConfig(num_classes=2, include_inputs=True,
-                                 vocab_size=config.vocab_size))
+                                 vocab_size=(len(ds.tokenizer) if bb.custom_class else config.vocab_size)))
         model = HFEpinetSeqClassifier(
             EpinetWrapper(base, S.get_feature_fn(bb), cfg, epinet=MLPEpinetWithConvPrior),
             k_train=8, k_eval=K_MAX).to(S.DEVICE)
@@ -152,10 +143,20 @@ def main():
                         correct = (pred == labels).astype(float)
                         conf = P.max(1)
                         p_true = P[np.arange(len(labels)), labels]
-                        rows.append(dict(
+                        extra = {}
+                        if "branch_length" in ds.metadata_cols:      # detection: unmutated anchors vs all evolved
+                            from sklearn.metrics import roc_auc_score
+                            t = np.asarray(ds.tokenized["branch_length"], dtype=float)
+                            sel = t <= 3.0 + 1e-9
+                            for nm, key in (("total", "normalized_total_uncertainty"), ("epistemic", "normalized_epistemic_uncertainty")):
+                                u = unc[key].numpy()
+                                extra[f"auroc_{nm}"] = roc_auc_score((t[sel] > 0).astype(int), u[sel])
+                        rows.append(dict(**extra,
                             dataset=dsname, backbone=bname, method=method, seed=seed, K=K,
                             n=len(labels), accuracy=float(correct.mean()),
-                            ece_15bin=ece(conf, correct),
+                            ece_15bin=ece(conf, correct), ece_50em=ece_em(conf, correct),
+                            brier=float(((P ** 2).sum(1) - 2 * p_true + 1).mean()),
+                            macro_f1=float(f1_score(labels, pred, average="macro")),
                             nll=float(-np.log(np.clip(p_true, 1e-12, None)).mean()),
                             u_total=float(unc["normalized_total_uncertainty"].mean()),
                             u_aleatoric=float(unc["normalized_aleatoric_uncertainty"].mean()),
@@ -169,7 +170,7 @@ def main():
     if not rows:
         raise SystemExit("no cells completed")
     df = pd.DataFrame(rows)
-    path = os.path.join(OUT, "k_convergence.csv")
+    path = os.path.join(OUT, os.environ.get("KCONV_FILE", "k_convergence.csv"))   # one file per parallel run
     df.to_csv(path, index=False)
     print(f"\nwrote {path} ({len(df)} rows)")
 

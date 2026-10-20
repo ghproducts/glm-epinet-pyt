@@ -215,6 +215,31 @@ def m_conv_epinet(bb, ds, seed, args):
 
 
 def m_laplace(bb, ds, seed, args):
+    model, base, attr, n_seen, best = build_laplace(bb, ds, seed)
+    stacks, all_labels = _laplace_sample(model, ds, K_LAPLACE)
+    del model, base
+    rows = _emit(ds, stacks, all_labels, "laplace")
+    for r in rows:
+        r["laplace_fit_examples"] = n_seen
+        r["laplace_classifier_attr"] = attr
+        r["laplace_prior_precision"] = best
+    return rows
+
+
+def _laplace_sample(model, d, k):
+    stacks, labs = [], []
+    with torch.no_grad():
+        for batch in d.loader(BATCH_SIZE):
+            key = "labels" if "labels" in batch else "label"
+            labs.append(batch.pop(key))
+            model(**{kk: v.to(S.DEVICE) for kk, v in batch.items()})   # populates the feature hook
+            stacks.append(model.sample_logits(k).float().cpu())
+    return stacks, labs
+
+
+def build_laplace(bb, ds, seed):
+    """Last-layer diagonal Laplace: curvature from the seed's training part (rescaled to its size),
+    prior precision by predictive NLL on its validation part. Returns (model, base, head, n_fit, prior)."""
     from nn_proj.models.laplace import LaplaceConfig, LaplaceSeqClassifier
     from nn_proj.models.laplace.laplace_head import fit_diagonal_ggn
     base = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
@@ -225,16 +250,7 @@ def m_laplace(bb, ds, seed, args):
     scale = len(fit_ds.labels) / max(n_seen, 1)          # posterior precision = prior + N * mean GGN
     w_ggn, b_ggn = w_ggn * scale, b_ggn * scale
 
-    def sample(model, d, k):
-        stacks, labs = [], []
-        with torch.no_grad():
-            for batch in d.loader(BATCH_SIZE):
-                key = "labels" if "labels" in batch else "label"
-                labs.append(batch.pop(key))
-                model(**{kk: v.to(S.DEVICE) for kk, v in batch.items()})   # populates the feature hook
-                stacks.append(model.sample_logits(k).float().cpu())
-        return stacks, labs
-
+    sample = _laplace_sample
     val = S.build_train_subset(bb, ds.tokenizer, seed=seed)
     nll = {}
     for prior in LAPLACE_PRIORS:
@@ -245,14 +261,7 @@ def m_laplace(bb, ds, seed, args):
     best = min(nll, key=nll.get)
     print(f"    laplace: head {attr}, prior {best}, val NLL {nll}", flush=True)
     model = LaplaceSeqClassifier(base, 1.0 / (best + w_ggn), 1.0 / (best + b_ggn), classifier_attr=attr).to(S.DEVICE).eval()
-    stacks, all_labels = sample(model, ds, K_LAPLACE)
-    del model, base
-    rows = _emit(ds, stacks, all_labels, "laplace")
-    for r in rows:
-        r["laplace_fit_examples"] = n_seen
-        r["laplace_classifier_attr"] = attr
-        r["laplace_prior_precision"] = best
-    return rows
+    return model, base, attr, n_seen, best
 
 
 def m_evidential(bb, ds, seed, args):
