@@ -63,7 +63,8 @@ def _find_data_file(rel: str) -> str:
 
 
 CKPT_ROOT = _default_ckpt_root()
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+# $SWEEP_RESULTS_DIR keeps a rerun (e.g. the early-stopping checkpoints) apart from older cells
+RESULTS_DIR = os.environ.get("SWEEP_RESULTS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SEQ_LEN = 300  # promoter_all
 
@@ -84,7 +85,16 @@ class Backbone:
 
     @property
     def max_length(self) -> int:
+        # $SWEEP_MEASURED_MAXLEN=1: the lengths the early-stopping checkpoints were trained at
+        # (scripts/train_promoter_es.sh), which count special tokens; otherwise the original
+        # seq_length * tokens_per_base used by the older checkpoints
+        if os.environ.get("SWEEP_MEASURED_MAXLEN") == "1":
+            return MEASURED_MAXLEN[self.name]
         return max(1, int(round(SEQ_LEN * self.tokens_per_base)))
+
+
+# measured over the train, test and AliSim corpora (see retrain_base.sh)
+MEASURED_MAXLEN = {"NT_transformer": 52, "DNABERT2": 77, "hyenaDNA": 301, "CARMANIA": 300}
 
 
 BACKBONES: dict[str, Backbone] = {
@@ -201,10 +211,37 @@ def build_base_arch(bb: Backbone, config=None, num_labels: int = 2,
     config = config if config is not None else load_config(bb, num_labels, ckpt_dir)
     if bb.custom_class:
         from nn_proj.models.CARMANIA.model import CarmaniaForSequenceClassification
-        return CarmaniaForSequenceClassification(config)
+        return _fp16_encoder(CarmaniaForSequenceClassification(config))
     return transformers.AutoModelForSequenceClassification.from_pretrained(
         bb.hub_id, config=config, trust_remote_code=True
     )
+
+
+def _fp16_encoder(model):
+    """CARMANIA's encoder uses FlashAttention when flash-attn is installed, which only runs in
+    fp16/bf16 (and it was fine-tuned under fp16 autocast). Run just the encoder under autocast and
+    hand fp32 hidden states back, so pooling, the head, and Laplace/Epinet stay in fp32."""
+    enc = model.encoder
+    fwd = enc.forward
+
+    def to32(x):
+        if torch.is_tensor(x):
+            return x.float() if x.is_floating_point() else x
+        if isinstance(x, tuple):
+            return tuple(to32(v) for v in x)
+        return x
+
+    def forward(*args, **kwargs):
+        with torch.autocast("cuda", dtype=torch.float16, enabled=torch.cuda.is_available()):
+            out = fwd(*args, **kwargs)
+        if isinstance(out, tuple):
+            return to32(out)
+        for k in list(out.keys()):
+            out[k] = to32(out[k])
+        return out
+
+    enc.forward = forward
+    return model
 
 
 def load_finetuned(bb: Backbone, ckpt_dir: str, config=None, num_labels: int = 2,
@@ -214,6 +251,9 @@ def load_finetuned(bb: Backbone, ckpt_dir: str, config=None, num_labels: int = 2
     partly-randomly-initialized model, which looks like a bad result rather
     than a bug."""
     model = build_base_arch(bb, config, num_labels, ckpt_dir=ckpt_dir)
+    if bb.name == "DNABERT2":
+        from nn_proj.common.utils import disable_dnabert2_flash_attn
+        disable_dnabert2_flash_attn()   # Triton kernel no longer compiles; same maths in PyTorch
     missing, unexpected = model.load_state_dict(load_checkpoint_weights(ckpt_dir), strict=False)
     if strict and (missing or unexpected):
         raise RuntimeError(
@@ -317,7 +357,8 @@ LABEL_NOISE_TRAIN = _find_data_file("data_gen/label_noise/csv_data_r00/train.csv
 VAL_FRACTION = 0.1  # matches the manuscript's 90/10 train/val split
 
 
-def build_train_subset(bb: Backbone, tokenizer, max_examples: Optional[int] = None) -> EvalDataset:
+def build_train_subset(bb: Backbone, tokenizer, max_examples: Optional[int] = None,
+                       seed: Optional[int | str] = None, part: str = "val") -> EvalDataset:
     """The held-out tail of the training split (the manuscript's D_val), used to
     fit post-hoc calibrators -- temperature, the Laplace posterior, and the
     conformal threshold. Deliberately NOT the evaluation set: fitting a
@@ -332,14 +373,25 @@ def build_train_subset(bb: Backbone, tokenizer, max_examples: Optional[int] = No
             f"{LABEL_NOISE_TRAIN} not found; it holds the training split needed to fit "
             f"post-hoc calibrators (it is gitignored -- see data_gen/label_noise/)"
         )
-    df = pd.read_csv(LABEL_NOISE_TRAIN)
-    n_val = int(round(len(df) * VAL_FRACTION))
-    df = df.iloc[len(df) - n_val:].reset_index(drop=True)  # tail == the 10% val slice
-    if max_examples:
-        df = df.iloc[:max_examples].reset_index(drop=True)
     from datasets import Dataset
-    ds = Dataset.from_dict({"sequence": df["sequence"].tolist(),
-                            "labels": [int(x) for x in df["label"].tolist()]})
+    if seed is not None:
+        # The exact split train_base.py made for this seed (train_test_split, test_size 0.1,
+        # seed=data_seed, stratified), so `val` was never trained on; `part="train"` gives the
+        # other 90%. The tail slice below is NOT that split: train_base never held it out.
+        full = load_local_dataset(path=LABEL_NOISE_TRAIN, encode_labels=True)
+        split = full.train_test_split(test_size=VAL_FRACTION, seed=int(seed), stratify_by_column="labels")
+        sub = split["test" if part == "val" else "train"]
+        if max_examples and len(sub) > max_examples:
+            sub = sub.shuffle(seed=0).select(range(max_examples))
+        ds = Dataset.from_dict({"sequence": list(sub["sequence"]), "labels": [int(x) for x in sub["labels"]]})
+    else:
+        df = pd.read_csv(LABEL_NOISE_TRAIN)
+        n_val = int(round(len(df) * VAL_FRACTION))
+        df = df.iloc[len(df) - n_val:].reset_index(drop=True)  # tail == the 10% val slice
+        if max_examples:
+            df = df.iloc[:max_examples].reset_index(drop=True)
+        ds = Dataset.from_dict({"sequence": df["sequence"].tolist(),
+                                "labels": [int(x) for x in df["label"].tolist()]})
     tokenized, collator = prep_for_trainer(ds, tokenizer, max_length=bb.max_length, metadata_cols=())
     collate_ds = tokenized.remove_columns(["sequence"])
     return EvalDataset("train_val", tokenized, collate_ds, collator, [], list(ds["labels"]), tokenizer)

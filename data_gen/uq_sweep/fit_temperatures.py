@@ -25,7 +25,7 @@ import torch.nn as nn
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as S  # noqa: E402
 
-OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temperatures.json")
+OUT_PATH = os.environ.get("SWEEP_TEMPERATURES") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "temperatures.json")
 FIT_EXAMPLES = int(os.environ.get("TEMP_FIT_EXAMPLES", "3000"))
 
 
@@ -81,7 +81,7 @@ def main():
             try:
                 if tok is None:
                     tok = S.load_tokenizer(bb)
-                val = S.build_train_subset(bb, tok, max_examples=FIT_EXAMPLES)
+                val = S.build_train_subset(bb, tok, max_examples=FIT_EXAMPLES, seed=seed)
                 model = S.load_finetuned(bb, ckpt)
                 logits, labels = collect_logits(model, val)
                 T = fit_temperature(logits, labels)

@@ -38,12 +38,19 @@ from nn_proj.common.utils import compute_uncertainty, enable_mc_dropout  # noqa:
 
 BATCH_SIZE = int(os.environ.get("SWEEP_BATCH_SIZE", "32"))
 K_MC = 10
-K_EPINET = 10
+K_EPINET = 16
 K_LAPLACE = 16
-LAPLACE_FIT_EXAMPLES = 2000
-LAPLACE_PRIOR_PRECISION = 1.0
+# Laplace (same recipe as data_gen/clean_fragments/eval_clean1500.py): curvature from the
+# seed's training part, prior precision chosen by predictive NLL on its validation part
+LAPLACE_FIT_EXAMPLES = None
+LAPLACE_PRIORS = (0.01, 0.1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5)
+# MC dropout perturbs only dropout layers active in fine-tuning (decided 2026-10-15):
+# DNABERT-2 trains with attention-probability dropout 0.0
+MC_EXCLUDE = {"DNABERT2": (".attention.self.dropout",)}
+TEMPERATURES = os.environ.get("SWEEP_TEMPERATURES") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "temperatures.json")
 MC_DROPOUT_P = 0.1
-ENSEMBLE_SEEDS = {"ensemble_k3": [1, 2, 3], "ensemble_k5": [1, 2, 3, 4, 42]}
+ENSEMBLE_SEEDS = {"ensemble_k3": [1, 2, 3], "ensemble_k5": [int(x) for x in os.environ.get("SWEEP_K5_SEEDS", "1,2,3,4,42").split(",")]}
 CONFORMAL_ALPHA = 0.1
 
 
@@ -116,7 +123,7 @@ def m_base(bb, ds, seed, args):
 def m_base_scaled(bb, ds, seed, args):
     """Temperature fitted on the held-out 10% of the training split (the same
     D_val the manuscript selects checkpoints on), never on the eval set."""
-    t_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temperatures.json")
+    t_path = TEMPERATURES
     temps = json.load(open(t_path)) if os.path.exists(t_path) else {}
     key = f"{bb.name}__seed{seed}"
     if key not in temps:
@@ -137,7 +144,7 @@ def m_base_scaled(bb, ds, seed, args):
 
 def m_mc_dropout(bb, ds, seed, args):
     model = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
-    enable_mc_dropout(model, p=MC_DROPOUT_P)
+    enable_mc_dropout(model, p=MC_DROPOUT_P, exclude=MC_EXCLUDE.get(bb.name, ()))
     stacks, labels = _stacked_logits_pass(model, ds, K_MC, resample_each=True)
     del model
     return _emit(ds, stacks, labels, "mc_dropout")
@@ -172,8 +179,9 @@ def m_conv_epinet(bb, ds, seed, args):
         epi_cfg = EpinetConfig(**{k: v for k, v in saved_cfg.items()
                                   if k in EpinetConfig.__dataclass_fields__})
     else:
+        # as train_epinet.py builds it; CARMANIA's config has no vocab_size (len(tokenizer) there)
         epi_cfg = EpinetConfig(num_classes=2, include_inputs=True,
-                               vocab_size=config.vocab_size)
+                               vocab_size=(len(ds.tokenizer) if bb.custom_class else config.vocab_size))
     wrapper = EpinetWrapper(base, S.get_feature_fn(bb), epi_cfg,
                             epinet=MLPEpinetWithConvPrior)
     model = HFEpinetSeqClassifier(wrapper, k_train=8, k_eval=K_EPINET).to(S.DEVICE)
@@ -207,31 +215,43 @@ def m_conv_epinet(bb, ds, seed, args):
 
 
 def m_laplace(bb, ds, seed, args):
-    from nn_proj.models.laplace import LaplaceConfig, LaplaceSeqClassifier, fit_diagonal_laplace
+    from nn_proj.models.laplace import LaplaceConfig, LaplaceSeqClassifier
+    from nn_proj.models.laplace.laplace_head import fit_diagonal_ggn
     base = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
     attr = S.find_classifier_attr(base)
-    cfg = LaplaceConfig(classifier_attr=attr, prior_precision=LAPLACE_PRIOR_PRECISION,
-                        max_examples=LAPLACE_FIT_EXAMPLES)
-    fit_ds = S.build_train_subset(bb, ds.tokenizer, max_examples=LAPLACE_FIT_EXAMPLES)
-    w_var, b_var, n_seen = fit_diagonal_laplace(base, fit_ds.collate_ds, fit_ds.collator,
-                                                cfg, batch_size=BATCH_SIZE)
-    model = LaplaceSeqClassifier(base, w_var, b_var, classifier_attr=attr).to(S.DEVICE).eval()
+    cfg = LaplaceConfig(classifier_attr=attr, max_examples=LAPLACE_FIT_EXAMPLES)
+    fit_ds = S.build_train_subset(bb, ds.tokenizer, seed=seed, part="train", max_examples=LAPLACE_FIT_EXAMPLES)
+    w_ggn, b_ggn, n_seen = fit_diagonal_ggn(base, fit_ds.collate_ds, fit_ds.collator, cfg, batch_size=BATCH_SIZE)
+    scale = len(fit_ds.labels) / max(n_seen, 1)          # posterior precision = prior + N * mean GGN
+    w_ggn, b_ggn = w_ggn * scale, b_ggn * scale
 
-    loader = ds.loader(BATCH_SIZE)
-    stacks, all_labels = [], []
-    with torch.no_grad():
-        for batch in loader:
-            key = "labels" if "labels" in batch else "label"
-            labels = batch.pop(key)
-            inputs = {k: v.to(S.DEVICE) for k, v in batch.items()}
-            model(**inputs)                       # populates the feature hook
-            stacks.append(model.sample_logits(K_LAPLACE).float().cpu())
-            all_labels.append(labels)
+    def sample(model, d, k):
+        stacks, labs = [], []
+        with torch.no_grad():
+            for batch in d.loader(BATCH_SIZE):
+                key = "labels" if "labels" in batch else "label"
+                labs.append(batch.pop(key))
+                model(**{kk: v.to(S.DEVICE) for kk, v in batch.items()})   # populates the feature hook
+                stacks.append(model.sample_logits(k).float().cpu())
+        return stacks, labs
+
+    val = S.build_train_subset(bb, ds.tokenizer, seed=seed)
+    nll = {}
+    for prior in LAPLACE_PRIORS:
+        lap = LaplaceSeqClassifier(base, 1.0 / (prior + w_ggn), 1.0 / (prior + b_ggn), classifier_attr=attr).to(S.DEVICE).eval()
+        st, yl = sample(lap, val, 32)
+        pm = torch.cat([x.softmax(-1).mean(0) for x in st]); y = torch.cat(yl)
+        nll[prior] = float(torch.nn.functional.nll_loss(torch.log(pm.clamp_min(1e-12)), y))
+    best = min(nll, key=nll.get)
+    print(f"    laplace: head {attr}, prior {best}, val NLL {nll}", flush=True)
+    model = LaplaceSeqClassifier(base, 1.0 / (best + w_ggn), 1.0 / (best + b_ggn), classifier_attr=attr).to(S.DEVICE).eval()
+    stacks, all_labels = sample(model, ds, K_LAPLACE)
     del model, base
     rows = _emit(ds, stacks, all_labels, "laplace")
     for r in rows:
         r["laplace_fit_examples"] = n_seen
         r["laplace_classifier_attr"] = attr
+        r["laplace_prior_precision"] = best
     return rows
 
 
@@ -248,7 +268,10 @@ def m_evidential(bb, ds, seed, args):
         loss_type=saved.get("loss_type", "mse"),
         annealing_step=saved.get("annealing_step", 10),
     )
-    base = S.build_base_arch(bb, ckpt_dir=ckpt if bb.custom_class else None)
+    # CARMANIA's config (encoder_name) is saved with the base checkpoint; the evidential
+    # Trainer checkpoint has none, and both fine-tune the same encoder
+    cfg_dir = (ckpt if os.path.exists(os.path.join(ckpt, "config.json")) else S.ckpt_path(bb.name, seed, "base"))
+    base = S.build_base_arch(bb, ckpt_dir=cfg_dir if bb.custom_class else None)
     model = HFEvidentialSeqClassifier(EvidentialWrapper(base, evid_cfg)).to(S.DEVICE)
     missing, unexpected = model.load_state_dict(S.load_checkpoint_weights(ckpt), strict=False)
     if missing or unexpected:
@@ -319,7 +342,7 @@ def m_conformal(bb, ds, seed, args):
         aps_nonconformity, fit_conformal_threshold, predict_sets, score_nonconformity,
     )
     base = S.load_finetuned(bb, S.ckpt_path(bb.name, seed, "base"))
-    cal = S.build_train_subset(bb, ds.tokenizer)
+    cal = S.build_train_subset(bb, ds.tokenizer, seed=seed)
     with torch.no_grad():
         cal_stacks, cal_labels = _stacked_logits_pass(base, cal, 1, resample_each=False)
     cal_probs = torch.cat([s.squeeze(0).softmax(-1) for s in cal_stacks], 0)

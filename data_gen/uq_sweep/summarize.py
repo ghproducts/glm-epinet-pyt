@@ -33,8 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sweep_lib import normalize_axis_cols  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RESULTS = os.path.join(HERE, "results")
-OUT = os.path.join(HERE, "summaries")
+RESULTS = os.environ.get("SWEEP_RESULTS_DIR") or os.path.join(HERE, "results")
+OUT = os.environ.get("SWEEP_SUMMARIES_DIR") or os.path.join(HERE, "summaries")
 
 BIN_COUNTS = (10, 15, 20, 25)
 # which column defines the shift axis for each dataset, and how strata are named
