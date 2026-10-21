@@ -45,9 +45,11 @@ TAX = {"": ROOT / "results/clean1500_es", "-multi": ROOT / "results/clean1500_es
 LIN = Path("/scratch/home/glh52/glm-epinet/DATA/clean1500/full_basic_lineage.csv")
 GENE_D = Path("/scratch/home/glh52/glm-epinet/DATA/gene_taxa")
 GENE_TIERS, GENE_CAP = {"id_test": "test", "taxa_out": "taxa_out", "gene_out": "gene_out"}, 25_000
-BB_ORDER = ["NT", "DNABERT2", "hyenaDNA", "CARMANIA", "CARMANIA (multi-species)", "no pretraining"]
+BB_ORDER = ["NT", "DNABERT2", "hyenaDNA", "CARMANIA", "CARMANIA (multi-species)", "no pretraining", "reference-based tool"]
 BB_NAME = {"NT_transformer": "NT", "nonpretrained": "no pretraining", "CARMANIA-multi": "CARMANIA (multi-species)"}
 M_ORDER = ["softmax", "temperature", "MC dropout", "Epinet", "Laplace", "evidential", "ensemble (5 seeds)",
+           "CNN", "CNN + MC dropout", "CNN ensemble (5 seeds)", "Kraken2 (raw score)", "Kraken2 (isotonic on val)",
+           "MMseqs2 (raw score)", "MMseqs2 (isotonic on val)",
            "conformal", "k-mer RF", "CNN + MC dropout", "CNN ensemble"]
 PROM_M = {"base": "softmax", "base_scaled": "temperature", "mc_dropout": "MC dropout", "conv_epinet": "Epinet",
           "laplace": "Laplace", "evidential": "evidential", "ensemble_k5": "ensemble (5 seeds)", "conformal": "conformal",
@@ -325,7 +327,47 @@ def tax_tables(rank):
             k = pd.read_csv(p / "kconv.csv"); k.insert(0, "seed", sd); k.insert(0, "backbone", b)
             k["method"] = k.method.map({"mc": "MC dropout", "epi": "Epinet", "lap": "Laplace"}); kc.append(k)
     f = lambda L: pd.DataFrame(L)
+    ec, es, eq, ed, et = ext_tables(rank)
+    cal, sel, qnt, dec, det = cal + ec, sel + es, qnt + eq, dec + ed, det + et
     return f(cal), f(sel), f(qnt), f(dec), add_delta(f(det)), f(cp), f(oov), (pd.concat(kc) if kc else pd.DataFrame())
+
+
+EXT = ROOT / "results/clean1500_external"
+
+
+def ext_tables(rank):
+    """non-GLM models (external_common.py format): k-mer RF / CNN ('no pretraining') and Kraken2 /
+    MMseqs2 ('reference-based tool'); same metrics as the GLM methods. Tools abstain (pred = -2):
+    counted as errors, with classification coverage reported."""
+    cal, sel, qnt, dec, det = [], [], [], [], []
+    for p in sorted(EXT.glob(f"*_{rank}")):
+        if p.name.startswith("smoke_"): continue
+        tool = p.name.startswith(("kraken2", "mmseqs2")); bb = "reference-based tool" if tool else "no pretraining"
+        F = {f.stem[4:]: pd.read_parquet(f) for f in sorted(p.glob("ext_*.parquet"))}
+        if "id_test" not in F: continue                     # not scored yet
+        for m in F["id_test"].method.unique():
+            G = {n: d[d.method == m].reset_index(drop=True) for n, d in F.items()}
+            for n, d in G.items():
+                y = d.y.values; iv = y >= 0; key = dict(backbone=bb, method=m, seed="1", set=n)
+                epi = d.epi.values if d.epi.notna().all() and np.abs(d.epi.values).max() > 1e-6 else None
+                ent = d.ent.values if d.ent.notna().all() else None
+                if iv.mean() >= 0.5:
+                    pred, conf = d.pred.values[iv], d.conf.values[iv]
+                    r = cls_metrics(y[iv], pred, conf, d.ptrue.values[iv], d.sq.values[iv])
+                    cal.append(dict(**key, frac_in_vocab=iv.mean(), source="external", classification_coverage=float((pred >= 0).mean()), **r))
+                    U = {"1 - max prob": 1 - conf, "entropy": ent[iv] if ent is not None else None, "epistemic": epi[iv] if epi is not None else None}
+                    sel += [dict(**key, **x) for x in selective(y[iv], pred, U)]
+                    qnt += [dict(**key, **x) for x in quintiles(y[iv], pred, conf, U)]
+                if ent is not None:
+                    dec.append(dict(**key, n=len(d), u_total=ent.mean(), u_epistemic=epi.mean() if epi is not None else np.nan,
+                                    u_aleatoric=(ent - epi).mean() if epi is not None else np.nan))
+            ref = G["id_test"]
+            for n, d in G.items():
+                if n == "id_test": continue
+                for c in [c for c in ref.columns if c.startswith("det_") and ref[c].notna().all()]:
+                    nm = c[4:].replace("1 - confidence", "1 - max prob")
+                    det.append(dict(backbone=bb, method=m, seed="1", score=nm, shifted=n, **det_metrics(ref[c].values, d[c].values)))
+    return cal, sel, qnt, dec, det
 
 
 # ---------------------------------------------------------------- writing
@@ -453,7 +495,8 @@ def main():
         S[f"{rank}_label_coverage"] = (order(oov), f"{rank} models: fraction of each set whose true label is a training class")
         if not kc.empty:
             S[f"{rank}_kconv"] = (order(kc), KC + f" ({rank} models, 500 fragments per set)")
-    S["darkmatter"] = (pd.read_csv(TAX[""] / "full_darkmatter_per_seed.csv"),
+    S["darkmatter"] = (pd.concat([pd.read_csv(TAX[""] / "full_darkmatter_per_seed.csv")] +
+                                 [pd.read_csv(f) for f in sorted(EXT.glob("*/darkmatter.csv")) if not f.parent.name.startswith("smoke_")]),
                        "dark matter: fraction of windows flagged at a given id_test false-positive rate per UP level, slope over the "
                        "15 samples and its p-value, and AUROC id_test vs each UP level, for every score and model")
     write("pbsim_darkmatter", S,
@@ -463,7 +506,13 @@ def main():
            "Phylum models: 43 classes (labeled sets: id_test, novel_genus, novel_family); family models: 460 classes (labeled: "
            "id_test, novel_genus). One training seed (seed 1) per model so far, so sd is blank.",
            "Dark matter: CAMISIM samples at unknown proportion UP 0.25 / 0.75 / 1.0 (5 samples each), MEGAHIT contigs, "
-           "non-overlapping 1.5 kb windows, 20k per sample; unlabeled, so only flagged fractions and score distributions."], out)
+           "non-overlapping 1.5 kb windows, 20k per sample; unlabeled, so only flagged fractions and score distributions.",
+           "Non-GLM rows: 'no pretraining' = k-mer RF (200 trees on 6-mer frequencies) and a from-scratch CNN (single, MC "
+           "dropout K = 10, 5-seed ensemble); 'reference-based tool' = Kraken2 and MMseqs2 against a database of the TRAINING "
+           "genome regions only. Tools give one label: p(pred) = confidence, the rest spread uniformly (abstentions = uniform, "
+           "counted as errors; classification_coverage = fraction not abstained). 'raw score' = Kraken2's clade k-mer fraction / "
+           "MMseqs2 identity x coverage; 'isotonic on val' = that score calibrated by isotonic regression on val.csv. "
+           "Ranking metrics (AURC, misclassification AUROC, detection) are unchanged by the calibration (monotone)."], out)
 
     # Scorpio gene_taxa
     cal, sel, qnt, dec, det, cp, oov, kc = tax_tables("gene_taxa")
@@ -472,7 +521,9 @@ def main():
     write("scorpio_gene_taxa", S,
           ["Scorpio gene classification (437 gene classes). id_test = held-out genes of training organisms (25k sample); "
            "taxa_out = the same gene classes from unseen organisms (labels valid); gene_out = unseen gene classes (no valid "
-           "labels: detection only; 25k sample). One training seed (seed 1)."], out)
+           "labels: detection only; 25k sample). One training seed (seed 1).",
+           "Non-GLM rows ('no pretraining'): k-mer RF and a from-scratch CNN (single, MC dropout K = 10, 5-seed ensemble), "
+           "sequences cut to their first 3,000 bp like the GLM inputs."], out)
 
 
 if __name__ == "__main__":
