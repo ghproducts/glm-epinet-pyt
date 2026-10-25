@@ -19,6 +19,7 @@ HALF=422     # 27,000 training rows (90% of 30,000) / batch 32 = 844 steps per e
 # model_max_length incl. special tokens, measured over train/test/AliSim (see data_gen/uq_sweep/retrain_base.sh)
 case $B in NT_transformer) ML=52;; DNABERT2) ML=77;; hyenaDNA) ML=301;; CARMANIA) ML=300;; *) echo bad backbone; exit 1;; esac
 D=$CKPT_ROOT/seed_$S/$B/label_noise_r00; LOG=logs/promoter_es; mkdir -p $D $LOG
+TAG=${EPI_TAG:+_$EPI_TAG}
 COMMON=(--data_path $DATA --num_labels 2 --model_max_length $ML --per_device_train_batch_size 32 --per_device_eval_batch_size 32
         --fp16 --save_total_limit 1 --load_best_model_at_end True --warmup_steps 50 --logging_steps 100
         --overwrite_output_dir True --find_unused_parameters False --seed $S --data_seed $S
@@ -30,16 +31,17 @@ best() {  # best checkpoint of a Trainer output dir (load_best_model_at_end keep
 }
 case $K in
   base)       MOD=train_base;     LR=2e-5; LINK=base;        EXTRA=() ;;
-  epinet)     MOD=train_epinet;   LR=1e-3; LINK=epinet_zfix
+  epinet)     MOD=train_epinet;   LR=1e-3; LINK=${EPI_TAG:-epinet_zfix}
               BK=$(readlink -f $D/base); [ -d "$BK" ] || { echo "no base for $B seed$S"; exit 1; }
-              EXTRA=(--checkpoint $BK) ;;
+              # PRIOR: relative prior scale for both the MLP and the conv prior (EpinetConfig.relative_prior)
+              EXTRA=(--checkpoint $BK ${PRIOR:+--prior_scale $PRIOR --conv_prior_scale $PRIOR}) ;;
   evidential) MOD=train_evidential; LR=2e-5; LINK=evidential; EXTRA=() ;;
   *) echo bad kind; exit 1 ;;
 esac
 OUT=$D/${LINK}_run
 echo "[$(date +%T)] $K $B seed$S gpu$G"
 CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.$MOD "${COMMON[@]}" "${EXTRA[@]}" --learning_rate $LR \
-  --run_name prom_${K}_${B}_s$S --output_dir $OUT > $LOG/${B}_${K}_s${S}.log 2>&1
+  --run_name prom_${K}_${B}_s$S$TAG --output_dir $OUT > $LOG/${B}_${K}${TAG}_s${S}.log 2>&1
 CK=$(best $OUT) || { echo "[$(date +%T)] FAILED $K $B seed$S"; exit 1; }
 ln -sfn $(basename $CK) $OUT/best && ln -sfn ${LINK}_run/best $D/$LINK
 echo "[$(date +%T)] DONE $K $B seed$S -> $CK"

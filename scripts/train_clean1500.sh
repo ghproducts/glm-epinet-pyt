@@ -71,7 +71,9 @@ echo "[$(date +%T)] base done -> $CK; epinet"
 EPI_ES=()
 [ "$EPI_PATIENCE" -gt 0 ] && EPI_ES=(--eval_strategy steps --eval_steps $HALF --save_strategy steps --save_steps $HALF
                                     --early_stopping_patience $EPI_PATIENCE --metric_for_best_model eval_loss --greater_is_better False)
+# PRIOR: relative Epinet prior scale (MLP and conv prior; EpinetConfig.relative_prior, chosen by the promoter sweep)
 CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_epinet "${COMMON[@]}" --learning_rate 1e-3 --num_train_epochs $EPI_EPOCHS "${EPI_ES[@]}" \
+  ${PRIOR:+--prior_scale $PRIOR --conv_prior_scale $PRIOR} \
   --checkpoint $CK --run_name c1500_epi_${B}_${R}_s$S --output_dir $OUT/epinet > $LOG/${B}_${R}_s${S}_epinet.log 2>&1
 EK=$(ls -d $OUT/epinet/checkpoint-* 2>/dev/null | sort -V | tail -1)
 [ -z "$EK" ] && { echo "[$(date +%T)] FAILED epinet $B $R seed$S"; exit 1; }
