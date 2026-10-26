@@ -269,6 +269,10 @@ def main():
     ap.add_argument("--darkmatter-only", action="store_true",
                     help="rescore only the dark matter windows with every method (base, MC, Epinet, Laplace, conformal), "
                          "e.g. after rebuilding them; the other sets' stored scores are reused unchanged")
+    ap.add_argument("--extra-only", default="",
+                    help="score one external window set NAME (--extra-csv) with every method, like --darkmatter-only; "
+                         "labels from its <rank> column (class taxid, -1 = none) when present, else from taxid")
+    ap.add_argument("--extra-csv", default="")
     ap.add_argument("--evidential-only", action="store_true",
                     help="add evidential (evid_*) columns from <ckpt>/evidential to an existing evaluation")
     a = ap.parse_args()
@@ -294,7 +298,8 @@ def main():
     else:
         lin = pd.read_csv(D / "full_basic_lineage.csv", index_col=0)
         s2r = dict(zip(lin.species.astype(int), lin[a.rank].astype(int)))
-        label_of = lambda df: np.array([s2r.get(t, -1) for t in df.taxid])
+        label_of = lambda df: (df[a.rank].astype(int).values if a.rank in df.columns
+                               else np.array([s2r.get(t, -1) for t in df.taxid]))
     if B == "CARMANIA":
         from nn_proj.models.CARMANIA.model import CarmaniaForSequenceClassification, CarmaniaSequenceClassificationConfig
         cfg = CarmaniaSequenceClassificationConfig.from_pretrained(base_ck)
@@ -338,6 +343,10 @@ def main():
             sets[f"{t}_err{r}"] = pd.read_csv(D / f"{t}_err{r}.csv")
     if not a.skip_darkmatter:
         sets["darkmatter"] = pd.read_csv(D / "darkmatter_contig_windows.csv")
+    if a.extra_only:
+        sets[a.extra_only] = pd.read_csv(a.extra_csv)
+    DM = a.darkmatter_only or bool(a.extra_only)            # score one set, reuse every other set's stored scores
+    TGT = a.extra_only or "darkmatter"
     if not GENE:
         val = pd.read_csv(D / "val.csv")
         ref = pd.read_csv(D / "train.csv", usecols=["sequence", "taxid"]).sample(a.n_ref, random_state=1)
@@ -400,7 +409,7 @@ def main():
         W = V * np.sqrt(np.clip(w, 0, None)); MUw = torch.from_numpy(MU @ W).float().to(DEV); Rd = R.to(DEV)
 
         S = {}
-        todo = {"darkmatter": sets["darkmatter"]} if a.darkmatter_only else sets
+        todo = {TGT: sets[TGT]} if DM else sets
         for name, d in todo.items():
             E, G = run_base(m, tok, d.sequence.values, ml, a.bs)
             p = torch.softmax(G, -1); pT = torch.softmax(G / T, -1)
@@ -441,13 +450,13 @@ def main():
             meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
             pd.concat([meta, S[name]], axis=1).to_parquet(out / f"scores_{name}.parquet", index=False)
         del em
-        if a.darkmatter_only:
+        if DM:
             # Laplace + conformal for the new windows (same fit, prior selection and val threshold as --posthoc-only)
             posthoc_columns(a, B, base_model, tok, ml, todo, S, val, label_of, lab2id, cfg, GENE, ref_for_laplace(a, GENE, None))
-            dmeta = sets["darkmatter"].drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
-            pd.concat([dmeta, S["darkmatter"]], axis=1).to_parquet(out / "scores_darkmatter.parquet", index=False)
+            dmeta = sets[TGT].drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
+            pd.concat([dmeta, S[TGT]], axis=1).to_parquet(out / f"scores_{TGT}.parquet", index=False)
             for name, d in sets.items():          # every other set: stored scores, unchanged
-                if name == "darkmatter": continue
+                if name == TGT: continue
                 old = pd.read_parquet(out / f"scores_{name}.parquet")
                 meta = d.drop(columns=["sequence", "labels"], errors="ignore").reset_index(drop=True)
                 assert len(old) == len(meta), f"{name}: {len(old)} stored rows vs {len(meta)} in the set"
