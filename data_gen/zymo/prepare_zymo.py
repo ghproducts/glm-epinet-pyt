@@ -21,7 +21,7 @@ from pathlib import Path
 import pandas as pd
 
 W = Path("/scratch/home/glh52/zymo")
-MINIMAP2 = "/home/glh52/.claude/jobs/dd626958/tmp/minimap2"
+MINIMAP2 = "/home/glh52/.claude/jobs/dd626958/tmp/minimap2-2.28_x64-linux/minimap2"
 FQ = W / "ERR3152364.fastq.gz"; REF = W / "zymo_ref.fa"
 OUT = Path("/scratch/home/glh52/glm-epinet/DATA/zymo")
 WIN = 1500

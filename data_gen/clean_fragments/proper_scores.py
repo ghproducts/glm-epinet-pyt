@@ -91,15 +91,22 @@ def main():
     ap.add_argument("--bs", type=int, default=64)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--skip-kconv", action="store_true")
+    ap.add_argument("--only", default="", help="comma list of method kinds to (re)compute, e.g. 'epi' after retraining the "
+                    "Epinet heads; the other methods' columns / rows are kept from the existing outputs")
     a = ap.parse_args()
     B = a.backbone; HUB, ml, E.FF, HALF = E.BACKBONES[B]
     # fp16 autocast for every sampled pass except hyenaDNA (its FFT long convolution stays fp32); the GPUs are
     # shared, and fp32 MC dropout over ~30k fragments x K passes is otherwise many hours per model
     AC = E.AC = B != "hyenaDNA"
     ck_dir = Path(f"{a.ckpt_root}/{B}/{a.rank}/seed{a.seed}")
-    out = Path(f"{a.out_root}/{B}_{a.rank}_s{a.seed}")
+    out = Path(f"{a.out_root}/{B}_{a.rank}_s{a.seed}"); ck_dir = Path(f"{a.ckpt_root}/{B}/{a.rank}/seed{a.seed}")
     meta = json.load(open(out / "meta.json"))
-    base_ck, epi_ck, T, prior = Path(meta["base"]), Path(meta["epinet"]), float(meta["T"]), float(meta["laplace_prior_precision"])
+    base_ck, T, prior = Path(meta["base"]), float(meta["T"]), float(meta["laplace_prior_precision"])
+    # the Epinet head: best checkpoint of <ckpt>/epinet (as eval_clean1500.py), not meta.json, which can lag a retrain
+    _last = sorted((ck_dir / "epinet").glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
+    _best = json.load(open(_last / "trainer_state.json")).get("best_model_checkpoint")
+    epi_ck = Path(_best) if _best and Path(_best).is_dir() else _last
+    print("epinet checkpoint:", epi_ck, flush=True)
     GENE = a.rank == "gene_taxa"
     if GENE:
         ml = E.GENE_ML[B]
@@ -195,7 +202,9 @@ def main():
     kc_sets = {k: sets[k].sample(min(KCONV_N, len(sets[k])), random_state=3) for k in sets if k != "darkmatter"}
     kc = {}
     if GENE: a.skip_kconv = True      # 3 kb sequences: K-convergence is run on the phylum / family models only
+    only = set(filter(None, a.only.split(",")))
     for kind, maker in [("base", lambda: base_model()), ("mc", make_mc), ("epi", make_epi), ("lap", make_lap)]:
+        if only and kind not in only: continue
         model = maker(); log(f"{kind}: model ready")
         outs = ["base", "temp"] if kind == "base" else [kind]
         for name in labeled:
@@ -221,9 +230,17 @@ def main():
                 kc[(kind, name)] = (st.half(), np.array([lab2id.get(int(l), -1) for l in label_of(d)]) if name not in E.NO_LABELS else np.full(len(d), -1))
             log(f"{kind}: K-convergence draws done")
         del model
-    for name in labeled:
-        pd.DataFrame({"y": Y[name], **cols[name]}).to_parquet(out / f"proper_{name}.parquet", index=False)
-    pd.DataFrame(rows_cw).to_csv(out / "classwise.csv", index=False)
+    if only:                                  # merge into the existing outputs
+        for name in labeled:
+            old = pd.read_parquet(out / f"proper_{name}.parquet")
+            for c, v in cols[name].items(): old[c] = v
+            old.to_parquet(out / f"proper_{name}.parquet", index=False)
+        cw = pd.read_csv(out / "classwise.csv"); cw = cw[~cw.method.isin(only)]
+        pd.concat([cw, pd.DataFrame(rows_cw)]).to_csv(out / "classwise.csv", index=False)
+    else:
+        for name in labeled:
+            pd.DataFrame({"y": Y[name], **cols[name]}).to_parquet(out / f"proper_{name}.parquet", index=False)
+        pd.DataFrame(rows_cw).to_csv(out / "classwise.csv", index=False)
 
     if kc:
         rows = []
@@ -242,7 +259,10 @@ def main():
                     r.update(auroc_entropy=roc_auc_score(lab, np.r_[enti.numpy(), ent.numpy()]),
                              auroc_epistemic=roc_auc_score(lab, np.r_[epii.numpy(), epi.numpy()]))
                 rows.append(r)
-        pd.DataFrame(rows).to_csv(out / "kconv.csv", index=False)
+        new = pd.DataFrame(rows)
+        if only and (out / "kconv.csv").exists():
+            old = pd.read_csv(out / "kconv.csv"); new = pd.concat([old[~old.method.isin(only)], new])
+        new.to_csv(out / "kconv.csv", index=False)
     print("DONE", out, flush=True)
 
 
