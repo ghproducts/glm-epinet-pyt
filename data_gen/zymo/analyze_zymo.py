@@ -102,6 +102,35 @@ def main():
                 for st, g in d[d.y >= 0].groupby("strand"):
                     strand.append(dict(rank=rank, strand=st, n_windows=len(g), accuracy=(g.base_pred == g.y).mean(),
                                        mean_conf=g.base_conf.mean(), kNN_mean=g.knn.mean()))
+    # reference-based tools (data_gen/zymo/tools_zymo.py), as-sequenced windows; thresholds from their clean id_test scores
+    for rank in ("family", "phylum"):
+        tp = OUT / f"tools_{rank}.parquet"
+        if not tp.exists(): continue
+        t = pd.read_parquet(tp); t["group"] = t.species.map(GROUP)
+        for m, g0 in t.groupby("method", sort=False):
+            tool = "kraken2" if m.startswith("Kraken2") else "mmseqs2"
+            ref = pd.read_parquet(ROOT / f"results/clean1500_external/{tool}_{rank}/ext_id_test.parquet"); ref = ref[ref.method == m]
+            key = dict(rank=rank, view="as sequenced")
+            lab = g0[g0.y >= 0]
+            for lvl, g in [("all labeled bacteria", lab)] + [(sp, x) for sp, x in lab.groupby("species")] + [(f"group: {k}", x) for k, x in lab.groupby("group")]:
+                r = E.cls_metrics(g.y.values, g.pred.values, g.conf.values)
+                cal.append(dict(**key, method=m, subset=lvl, n_windows=len(g), n_reads=g.read.nunique(), classification_coverage=float((g.pred >= 0).mean()),
+                                **{k: r[k] for k in ("accuracy", "macro_f1", "ece_50em", "ece_15ew", "mean_conf", "overconfidence")}))
+            pairs = {"yeast vs all bacteria": (g0.group == "yeast", g0.group.isin(["training species", "genus in training", "held-out genus"])),
+                     "held-out genus vs training species": (g0.group == "held-out genus", g0.group == "training species"),
+                     "yeast vs training species": (g0.group == "yeast", g0.group == "training species")}
+            for c in [c for c in g0.columns if c.startswith("det_")]:
+                sname = f"{m}: {c[4:]}"; s_ = g0[c].values.astype(float); si = ref[c].values.astype(float)
+                for pname, (pos, neg) in pairs.items():
+                    det.append(dict(**key, score=sname, comparison=pname, level="window", **E.det_metrics(s_[neg.values], s_[pos.values])))
+                for f in FPRS:            # tied scores: flag a fraction of the ties so the id_test FPR is exactly f
+                    th = np.quantile(si, 1 - f); at = (si == th).mean(); w = (f - (si > th).mean()) / at if at > 0 else 0.0
+                    fl = (s_ > th) + w * (s_ == th)
+                    row = dict(**key, score=sname, id_test_fpr=f, flagged_all=fl.mean(),
+                               **{f"flagged | {g}": fl[(g0.group == g).values].mean() for g in
+                                  ["training species", "genus in training", "held-out genus", "yeast", "unassigned"]})
+                    row["true yeast window fraction"] = (g0.group == "yeast").mean()
+                    flag.append(row)
     C, Dt, F, H, S = map(pd.DataFrame, (cal, det, flag, hist, strand))
     for n, x in [("classification", C), ("detection", Dt), ("flagged", F), ("histograms", H), ("strand", S)]:
         x.to_csv(OUT / f"{n}.csv", index=False)

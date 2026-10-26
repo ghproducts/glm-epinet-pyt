@@ -168,6 +168,11 @@ def load_epinet_saved_config(ckpt_dir: str) -> Optional[dict]:
     """EpinetConfig fields recorded by train_epinet.py --save_model, so the
     wrapper is rebuilt with the config it was trained under rather than
     re-derived defaults."""
+    import json as _json
+    for c in (os.path.join(ckpt_dir, "epinet_config.json"),
+              os.path.join(os.path.dirname(os.path.realpath(ckpt_dir)), "epinet_config.json")):
+        if os.path.exists(c):          # written by train_epinet.py next to the Trainer checkpoints
+            return _json.load(open(c))
     epi = os.path.join(ckpt_dir, "model_epinet.pt")
     if not os.path.exists(epi):
         return None

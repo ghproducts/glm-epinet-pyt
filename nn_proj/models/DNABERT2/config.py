@@ -19,6 +19,8 @@ class ModelArguments:
     temperature: float = field(default=1.0, metadata={"help": "Temperature scaling parameter."})
     prior_scale: float = field(default=1.0, metadata={"help": "Epinet MLP prior scale; 0 disables the randomized MLP prior (capacity ablation)."})
     conv_prior_scale: float = field(default=1.0, metadata={"help": "Epinet conv prior scale; 0 disables the fixed conv prior ensemble (capacity ablation)."})
+    index_dim: int = field(default=30, metadata={"help": "Epinet index dimension Dz (ablation)."})
+    deterministic_index: bool = field(default=False, metadata={"help": "Epinet with one fixed index vector (matched-capacity deterministic control)."})
 
 @dataclass
 class DataArguments:

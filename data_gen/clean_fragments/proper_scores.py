@@ -181,6 +181,19 @@ def main():
         s = len(tdf) / max(n, 1)
         return LaplaceSeqClassifier(m, 1.0 / (prior + w * s), 1.0 / (prior + b * s), classifier_attr=attr).to(E.DEV).eval()
 
+    def make_evid():
+        from nn_proj.models.evidential import EvidentialConfig, EvidentialWrapper, HFEvidentialSeqClassifier
+        last = sorted((ck_dir / "evidential").glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
+        best = json.load(open(last / "trainer_state.json")).get("best_model_checkpoint")
+        ck = Path(best) if best and Path(best).is_dir() else last
+        print("evidential checkpoint:", ck, flush=True)
+        base = CarmaniaForSequenceClassification(cfg) if B == "CARMANIA" else \
+            transformers.AutoModelForSequenceClassification.from_pretrained(HUB, config=cfg, trust_remote_code=True)
+        if B == "DNABERT2":
+            from nn_proj.common.utils import disable_dnabert2_flash_attn; disable_dnabert2_flash_attn()
+        m = HFEvidentialSeqClassifier(EvidentialWrapper(base, EvidentialConfig(num_classes=C)))
+        m.load_state_dict(E.load_weights(ck), strict=True); return m.to(E.DEV).eval()
+
     @torch.no_grad()
     def probs(kind, model, seqs, k):
         """yields [k, B, C] probabilities batch by batch"""
@@ -193,6 +206,10 @@ def main():
                     P = torch.stack([E.FF(model, b)[0].float().softmax(-1) for _ in range(k)])
                 elif kind == "epi":
                     P = model.wrapper(dict(b), n_index_samples=k, return_all=True).float().softmax(-1)
+                elif kind == "evid":                    # Dirichlet mean p = alpha / S; slice 1 carries the vacuity C / S
+                    b.pop("token_type_ids", None) if B == "hyenaDNA" else None
+                    alpha = model(**b)["logits"].float() + 1.0; Ssum = alpha.sum(-1, keepdim=True)
+                    P = torch.stack([alpha / Ssum, (C / Ssum).expand_as(alpha)])
                 else:
                     b.pop("token_type_ids", None) if B == "hyenaDNA" else None
                     model(**b); P = model.sample_logits(k).float().softmax(-1)
@@ -203,7 +220,9 @@ def main():
     kc = {}
     if GENE: a.skip_kconv = True      # 3 kb sequences: K-convergence is run on the phylum / family models only
     only = set(filter(None, a.only.split(",")))
-    for kind, maker in [("base", lambda: base_model()), ("mc", make_mc), ("epi", make_epi), ("lap", make_lap)]:
+    kinds = [("base", lambda: base_model()), ("mc", make_mc), ("epi", make_epi), ("lap", make_lap)]
+    if list((ck_dir / "evidential").glob("checkpoint-*")): kinds.append(("evid", make_evid))
+    for kind, maker in kinds:
         if only and kind not in only: continue
         model = maker(); log(f"{kind}: model ready")
         outs = ["base", "temp"] if kind == "base" else [kind]
@@ -213,7 +232,8 @@ def main():
             for P in probs(kind, model, sets[name].sequence.values, K.get(kind, 1)):
                 P = P.to(E.DEV); yb = y[i0:i0 + P.shape[1]].to(E.DEV); i0 += P.shape[1]
                 for j, o in enumerate(outs):
-                    pm, ent, epi = summarize(P[j:j + 1] if kind == "base" else P, logC); A = acc[o]
+                    pm, ent, epi = summarize(P[j:j + 1] if kind in ("base", "evid") else P, logC); A = acc[o]
+                    if kind == "evid": epi = P[1][:, 0]          # vacuity
                     A["conf"].append(pm.max(1).values.cpu()); A["pred"].append(pm.argmax(1).cpu())
                     A["ptrue"].append(torch.where(yb >= 0, pm.gather(1, yb.clamp_min(0).unsqueeze(1)).squeeze(1), torch.full_like(ent, float("nan"))).cpu())
                     A["sq"].append((pm * pm).sum(1).cpu()); A["ent"].append(ent.cpu()); A["epi"].append(epi.cpu())

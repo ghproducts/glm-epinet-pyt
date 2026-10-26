@@ -50,6 +50,9 @@ class EpinetConfig:
     # standardize the pooled features fed to the train / prior heads (parameter-free layer norm):
     # backbones differ by >10x in feature norm
     normalize_features: bool = True
+    # ablation (reviewer 2, point 7): matched-capacity deterministic control -- same networks and parameter count,
+    # but the index is one fixed vector (stored in the checkpoint) instead of z ~ N(0, I); use with zero priors
+    deterministic_index: bool = False
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -68,11 +71,16 @@ class GaussianIndexer(nn.Module):
     spread were not independent of its batch-mates' draws. Fixed per
     R1-4/#8 in .docs/RESUBMISSION_PLAN.md.
     """
-    def __init__(self, index_dim: int):
+    def __init__(self, index_dim: int, deterministic: bool = False):
         super().__init__()
         self.index_dim = index_dim
+        self.deterministic = deterministic
+        if deterministic:      # one fixed index vector, saved with the head
+            self.register_buffer("z0", torch.randn(index_dim, generator=torch.Generator().manual_seed(0)))
     @torch.no_grad()
     def forward(self, batch_size: int, device=None, dtype=None) -> torch.Tensor:
+        if self.deterministic:
+            return self.z0.to(device=device, dtype=dtype or torch.float32).expand(batch_size, -1).clone()
         return torch.randn(batch_size, self.index_dim, device=device, dtype=dtype or torch.float32)
 
 
@@ -221,6 +229,15 @@ class FixedConv1DPriorEnsemble(nn.Module):
 # Epinet definitinos
 # ---------------------------------------------------------------------
 
+def save_epinet_config(cfg: "EpinetConfig", out_dir: str) -> None:
+    """write the EpinetConfig next to the Trainer checkpoints, so evaluation can rebuild non-default heads
+    (index_dim, deterministic_index, ...) instead of assuming the defaults"""
+    import json
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "epinet_config.json"), "w") as f:
+        json.dump({k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(cfg).items()}, f, indent=1)
+
+
 def _register_prior_buffers(module: nn.Module, cfg: "EpinetConfig") -> None:
     """effective prior multipliers (prior_scale x calibrated gain) live in the state dict, so a saved
     head carries its own prior settings; `prior_calibrated` = 0 until calibrate_priors() has run"""
@@ -250,7 +267,7 @@ class MLPEpinetWithPrior(nn.Module):
         self.train_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=True, concat_index=cfg.concat_index)
         self.prior_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=False, concat_index=cfg.concat_index)
         _register_prior_buffers(self, cfg)
-        self.indexer = GaussianIndexer(Dz)
+        self.indexer = GaussianIndexer(Dz, deterministic=getattr(cfg, "deterministic_index", False))
 
     @staticmethod
     def _flatten(x: torch.Tensor) -> torch.Tensor:
@@ -282,7 +299,7 @@ class MLPEpinetWithConvPrior(nn.Module):
         self.train_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=True,  concat_index=cfg.concat_index)
         self.prior_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=False, concat_index=cfg.concat_index)
         self.conv_prior = FixedConv1DPriorEnsemble(cfg, vocab_size=cfg.vocab_size, embed_dim=cfg.conv_embed_dim)
-        self.indexer = GaussianIndexer(Dz)
+        self.indexer = GaussianIndexer(Dz, deterministic=getattr(cfg, "deterministic_index", False))
         _register_prior_buffers(self, cfg)
 
     def forward(self, hidden: torch.Tensor, inputs: Any, z: torch.Tensor) -> torch.Tensor:

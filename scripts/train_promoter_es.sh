@@ -37,7 +37,9 @@ case $K in
   epinet)     MOD=train_epinet;   LR=1e-3; LINK=${EPI_TAG:-epinet_zfix}
               BK=$(readlink -f $D/base); [ -d "$BK" ] || { echo "no base for $B seed$S"; exit 1; }
               # PRIOR: relative prior scale for both the MLP and the conv prior (EpinetConfig.relative_prior)
-              EXTRA=(--checkpoint $BK ${PRIOR:+--prior_scale $PRIOR --conv_prior_scale $PRIOR}) ;;
+              # ablations: CONV_PRIOR (conv prior scale, default = PRIOR), INDEX_DIM, DET=1 (fixed index vector)
+              EXTRA=(--checkpoint $BK ${PRIOR:+--prior_scale $PRIOR} --conv_prior_scale ${CONV_PRIOR:-${PRIOR:-1.0}}
+                     ${INDEX_DIM:+--index_dim $INDEX_DIM} ${DET:+--deterministic_index True}) ;;
   evidential) MOD=train_evidential; LR=2e-5; LINK=evidential; EXTRA=() ;;
   *) echo bad kind; exit 1 ;;
 esac

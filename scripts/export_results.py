@@ -59,7 +59,7 @@ TAX_M = {"softmax": ("base_conf", "base_pred", "entropy", None), "temperature": 
          "MC dropout": ("mc_conf", "mc_pred", "mc_entropy", "mc_epistemic"), "Epinet": ("epi_conf", "epi_pred", "epi_entropy", "epi_epistemic"),
          "Laplace": ("lap_conf", "lap_pred", "lap_entropy", "lap_epistemic"), "evidential": ("evid_conf", "evid_pred", "evid_entropy", "evid_vacuity")}
 # taxonomic proper_*.parquet prefixes (proper_scores.py)
-TAX_P = {"softmax": "base", "temperature": "temp", "MC dropout": "mc", "Epinet": "epi", "Laplace": "lap"}
+TAX_P = {"softmax": "base", "temperature": "temp", "MC dropout": "mc", "Epinet": "epi", "Laplace": "lap", "evidential": "evid"}
 BINS = (10, 15, 20, 25, 50)
 COVER = (0.5, 0.8, 0.9, 0.95)
 
@@ -281,10 +281,10 @@ def tax_tables(rank):
                 P = pd.read_parquet(pr) if pr.exists() else None
                 for m, (cc, pc, ec, xc) in TAX_M.items():
                     key = dict(backbone=b, method=m, seed=sd, set=name)
-                    if P is not None and m in TAX_P:          # proper-score pass: every column from one consistent draw
+                    if P is not None and m in TAX_P and f"{TAX_P[m]}_conf" in P:   # proper-score pass: one consistent draw
                         x = TAX_P[m]; conf, pred = P[f"{x}_conf"].values[iv], P[f"{x}_pred"].values[iv]
                         ptrue, sq = P[f"{x}_ptrue"].values[iv], P[f"{x}_sq"].values[iv]
-                        ent, epi = P[f"{x}_ent"].values[iv], (P[f"{x}_epi"].values[iv] if m in ("MC dropout", "Epinet", "Laplace") else None)
+                        ent, epi = P[f"{x}_ent"].values[iv], (P[f"{x}_epi"].values[iv] if m in ("MC dropout", "Epinet", "Laplace", "evidential") else None)
                         src = "proper_scores"
                     elif cc in sc:
                         conf, pred, ptrue, sq = sc[cc].values[iv], sc[pc].values[iv], None, None
