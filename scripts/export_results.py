@@ -445,6 +445,25 @@ def prom_kconv(datasets):
     return k
 
 
+def prior_sweep_sheets(ds):
+    """Epinet relative prior-scale sweep on the promoter models (4 backbones x 3 seeds x {0, 0.1, 0.3, 1, 3}),
+    the selection criterion (validation mixture NLL) and the resulting test metrics"""
+    f, v = ROOT / "results/promoter_es_priorsweep/sweep_summary_per_seed.csv", ROOT / "results/promoter_es_priorsweep_val.csv"
+    if not f.exists(): return {}
+    d = pd.read_csv(f); d = d[d.dataset == ds].copy(); d["backbone"] = d.backbone.map(lambda b: BB_NAME.get(b, b))
+    keys = ["backbone", "variant"]
+    S = {"prior_sweep": (order(agg(d.drop(columns="dataset"), keys)),
+                         "Epinet prior-scale sweep (relative scale: each prior's spread = scale x base logit spread), mean over 3 seeds; "
+                         "'prior 0' = learnable head only (no priors); 'old (unfixed)' = heads before the 2026-10-25 fixes; selection by "
+                         "validation mixture NLL (sheet prior_sweep_val), chosen scale 0.3"),
+         "prior_sweep_per_seed": (order(d), "the same, one row per seed")}
+    if v.exists():
+        x = pd.read_csv(v); x["backbone"] = x.backbone.map(lambda b: BB_NAME.get(b, b))
+        S["prior_sweep_val"] = (order(agg(x, ["backbone", "prior"], ["val_nll", "base_val_ce", "delta_vs_base", "epochs"])),
+                                "selection criterion: validation mixture NLL of each Epinet head vs the base model's validation CE")
+    return S
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--out", default=str(ROOT / "results/tables")); out = Path(ap.parse_args().out)
     KC = "K-convergence: MC dropout / Epinet / Laplace metrics on nested prefixes of K_MAX samples (one draw per cell), per seed"
@@ -456,6 +475,7 @@ def main():
     if not k.empty:
         S["kconv"] = (order(agg(k, ["backbone", "method", "K"], [c for c in k.columns if c not in ("dataset", "backbone", "method", "seed", "K", "n")])), KC + " (mean over seeds)")
         S["kconv_per_seed"] = (order(k), KC)
+    S.update(prior_sweep_sheets("boundary"))
     write("aleatoric_boundary", S,
           ["Aleatoric shift: promoter_all test split (1,584 sequences; inputs are in-distribution), stratified by the margin "
            "quartile of a reference model (Q1 = nearest the class boundary: the most ambiguous sequences). stratum 'pooled' = all.",
@@ -478,6 +498,7 @@ def main():
     if not k.empty:
         S["kconv"] = (order(agg(k, ["backbone", "method", "K"], [c for c in k.columns if c not in ("dataset", "backbone", "method", "seed", "K", "n")])), KC + " (mean over seeds)")
         S["kconv_per_seed"] = (order(k), KC)
+    S.update(prior_sweep_sheets("alisim"))
     write("epistemic_alisim", S,
           ["Epistemic shift: the 400 promoter_all test anchors evolved with AliSim (HKY+G4) at branch lengths t = 0 ... 3 "
            "(16 values) and t = 5, 8, 12 (extended set, reported per t only); labels are inherited from the anchor. "

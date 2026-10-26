@@ -11,6 +11,9 @@ set -uo pipefail
 cd "${REPO:-$(dirname "$0")/..}"
 source /scratch/home/glh52/venvs/glm_epinet_venv/bin/activate
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Hugging Face datasets writes an Arrow copy of every CSV load / tokenized map; keep it off the 7 TB root disk
+# (it had grown to 1.7 TB in ~/.cache/huggingface/datasets/csv and filled / on 2026-10-25)
+export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-/scratch/home/glh52/.cache_hf_datasets}
 B=$1; K=$2; S=$3; G=$4
 CKPT_ROOT=${CKPT_ROOT:-/scratch/home/glh52/glm-epinet-pyt/checkpoints/promoter_es}
 DATA=${DATA:-/scratch/home/glh52/glm-epinet-pyt/data_gen/label_noise/csv_data_r00/train.csv}

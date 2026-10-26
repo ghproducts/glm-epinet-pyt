@@ -13,6 +13,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source /scratch/home/glh52/venvs/glm_epinet_venv/bin/activate
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Hugging Face datasets writes an Arrow copy of every CSV load / tokenized map; keep it off the 7 TB root disk
+# (it had grown to 1.7 TB in ~/.cache/huggingface/datasets/csv and filled / on 2026-10-25)
+export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-/scratch/home/glh52/.cache_hf_datasets}
 B=$1; R=$2; S=$3; G=$4
 # optional overrides: EPOCHS (base-model cap, default 20), CKPT_ROOT (default checkpoints/clean1500_es),
 # PATIENCE (default 3; >0: base model evaluates every half epoch and stops after PATIENCE evaluations
