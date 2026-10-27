@@ -78,8 +78,18 @@ def fpr95(id_s, ood_s):
     return float(f[np.searchsorted(t, 0.95)])
 
 
+PASS_ID = [0]
+
+
 def batches(tok, seqs, ml, bs):
-    for i in range(0, len(seqs), bs):
+    """tokenized batches; for long passes, logs progress (~every 5%) with elapsed time and ETA"""
+    import time
+    nb = (len(seqs) + bs - 1) // bs; step = max(1, nb // 20); t0 = time.time(); PASS_ID[0] += 1
+    for j, i in enumerate(range(0, len(seqs), bs)):
+        if nb >= 200 and j and j % step == 0:
+            el = time.time() - t0
+            print(f"    [pass {PASS_ID[0]}] {j}/{nb} batches ({100 * j / nb:.0f}%), {el / 60:.1f} min elapsed, "
+                  f"ETA {el / j * (nb - j) / 60:.1f} min", flush=True)
         b = tok(list(seqs[i:i + bs]), return_tensors="pt", padding=True, truncation=True, max_length=ml)
         yield {k: v.to(DEV) for k, v in b.items()}
 
