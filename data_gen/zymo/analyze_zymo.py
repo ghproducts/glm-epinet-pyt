@@ -48,9 +48,14 @@ def load(rank, name):
 
 
 def main():
+    import argparse
+    global OUT
+    ap = argparse.ArgumentParser(); ap.add_argument("--sets", default="zymo,zymo_oriented", help="as-sequenced,oriented set names")
+    ap.add_argument("--out", default=str(OUT)); a = ap.parse_args()
+    OUT = Path(a.out); OUT.mkdir(parents=True, exist_ok=True); seq_name, ori_name = a.sets.split(",")
     cal, det, flag, hist, strand = [], [], [], [], []
     for rank in ("family", "phylum"):
-        for name, view in (("zymo", "as sequenced"), ("zymo_oriented", "strand-oriented")):
+        for name, view in ((seq_name, "as sequenced"), (ori_name, "strand-oriented")):
             try: d, idt = load(rank, name)
             except FileNotFoundError: print("missing", rank, name); continue
             key = dict(rank=rank, view=view)
@@ -98,15 +103,18 @@ def main():
                     c, _ = np.histogram(x, bins=bins)
                     hist += [dict(**key, score=sname, group=g, bin_lo=bins[i], bin_hi=bins[i + 1], density=c[i] / max(len(x), 1)) for i in range(60)]
             # strand
-            if name == "zymo":
+            if name == seq_name:
                 for st, g in d[d.y >= 0].groupby("strand"):
                     strand.append(dict(rank=rank, strand=st, n_windows=len(g), accuracy=(g.base_pred == g.y).mean(),
                                        mean_conf=g.base_conf.mean(), kNN_mean=g.knn.mean()))
     # reference-based tools (data_gen/zymo/tools_zymo.py), as-sequenced windows; thresholds from their clean id_test scores
     for rank in ("family", "phylum"):
-        tp = OUT / f"tools_{rank}.parquet"
+        tp = ROOT / f"results/zymo/tools_{rank}.parquet"
         if not tp.exists(): continue
         t = pd.read_parquet(tp); t["group"] = t.species.map(GROUP)
+        nt = ROOT / f"results/clean1500_es/NT_transformer_{rank}_s1/scores_{seq_name}.parquet"
+        if nt.exists():          # same windows as the NT scoring (e.g. the 100k subsample)
+            keys = pd.read_parquet(nt, columns=["read", "window"]); t = t.merge(keys, on=["read", "window"])
         for m, g0 in t.groupby("method", sort=False):
             tool = "kraken2" if m.startswith("Kraken2") else "mmseqs2"
             ref = pd.read_parquet(ROOT / f"results/clean1500_external/{tool}_{rank}/ext_id_test.parquet"); ref = ref[ref.method == m]
