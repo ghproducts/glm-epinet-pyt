@@ -75,7 +75,8 @@ def main():
                      "held-out genus vs training species": (d.group == "held-out genus", d.group == "training species"),
                      "yeast vs training species": (d.group == "yeast", d.group == "training species")}
             for sname, fn in SCORES.items():
-                s = fn(d).values.astype(float); si = fn(idt).values.astype(float)
+                try: s = fn(d).values.astype(float); si = fn(idt).values.astype(float)
+                except (AttributeError, KeyError): continue          # score not present in this run
                 rs = d.assign(s=s).groupby("read").agg(s_mean=("s", "mean"), s_max=("s", "max"), group=("group", "first"))
                 for pname, (pos, neg) in pairs.items():
                     r = E.det_metrics(s[neg.values], s[pos.values])
@@ -99,7 +100,7 @@ def main():
                         flag[-1]["flagged_reads | yeast"] = fr[fr.group == "yeast"].fl.mean()
                 # histogram data
                 lo, hi = np.nanquantile(np.r_[s, si], [0.001, 0.999]); bins = np.linspace(lo, hi, 61)
-                for g, x in [("clean id_test", si)] + [(g, s[(d.group == g).values]) for g in GROUP.values() if g in set(d.group)]:
+                for g, x in [("clean id_test", si)] + [(g, s[(d.group == g).values]) for g in dict.fromkeys(GROUP.values()) if g in set(d.group)]:
                     c, _ = np.histogram(x, bins=bins)
                     hist += [dict(**key, score=sname, group=g, bin_lo=bins[i], bin_hi=bins[i + 1], density=c[i] / max(len(x), 1)) for i in range(60)]
             # strand
@@ -127,7 +128,7 @@ def main():
             pairs = {"yeast vs all bacteria": (g0.group == "yeast", g0.group.isin(["training species", "genus in training", "held-out genus"])),
                      "held-out genus vs training species": (g0.group == "held-out genus", g0.group == "training species"),
                      "yeast vs training species": (g0.group == "yeast", g0.group == "training species")}
-            for c in [c for c in g0.columns if c.startswith("det_")]:
+            for c in [c for c in g0.columns if c.startswith("det_") and c in ref.columns and g0[c].notna().all()]:
                 sname = f"{m}: {c[4:]}"; s_ = g0[c].values.astype(float); si = ref[c].values.astype(float)
                 for pname, (pos, neg) in pairs.items():
                     det.append(dict(**key, score=sname, comparison=pname, level="window", **E.det_metrics(s_[neg.values], s_[pos.values])))
