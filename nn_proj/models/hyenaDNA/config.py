@@ -17,6 +17,10 @@ class ModelArguments:
     num_samples: int = field(default=1, metadata={"help": "Number of samples for MC dropout or epinet."})
     uncertainty_method: str = field(default=None, metadata={"help": "Uncertainty method to use: epinet or mc_dropout."})
     temperature: float = field(default=1.0, metadata={"help": "Temperature scaling parameter."})
+    prior_scale: float = field(default=1.0, metadata={"help": "Epinet MLP prior scale; 0 disables the randomized MLP prior (capacity ablation)."})
+    conv_prior_scale: float = field(default=1.0, metadata={"help": "Epinet conv prior scale; 0 disables the fixed conv prior ensemble (capacity ablation)."})
+    index_dim: int = field(default=30, metadata={"help": "Epinet index dimension Dz (ablation)."})
+    deterministic_index: bool = field(default=False, metadata={"help": "Epinet with one fixed index vector (matched-capacity deterministic control)."})
 
 @dataclass
 class DataArguments:
@@ -48,6 +52,7 @@ class TrainingArguments(transformers.TrainingArguments):
     save_total_limit: int = field(default=3)
     load_best_model_at_end: bool = field(default=True)
     output_dir: str = field(default="output")
+    early_stopping_patience: int = field(default=0, metadata={"help": "Stop after this many evaluations without eval-loss improvement (0 = off)."})
     find_unused_parameters: bool = field(default=False)
     checkpointing: bool = field(default=False)
     dataloader_pin_memory: bool = field(default=False)

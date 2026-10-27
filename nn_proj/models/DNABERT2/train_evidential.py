@@ -37,6 +37,7 @@ class EvidentialArguments:
     annealing_step: int = field(
         default=10, metadata={"help": "Epochs until the KL regularizer reaches full weight."}
     )
+    kl_weight: float = field(default=1.0, metadata={"help": "Maximum KL coefficient (1 = Sensoy et al.)."})
 
 
 class EvidentialTrainer(transformers.Trainer):
@@ -59,9 +60,11 @@ class EvidentialTrainer(transformers.Trainer):
             evidence,
             labels,
             num_classes=self.evidential_cfg.num_classes,
-            epoch=self.state.epoch or 0.0,
+            # validation loss at full KL weight, so it is comparable across epochs (early stopping)
+            epoch=(self.state.epoch or 0.0) if model.training else float(self.evidential_cfg.annealing_step),
             annealing_step=self.evidential_cfg.annealing_step,
             loss_type=self.evidential_cfg.loss_type,
+            kl_weight=getattr(self.evidential_cfg, "kl_weight", 1.0),
         )
         inputs["labels"] = labels  # restore in case the Trainer reuses `inputs` after this call
         return (loss, outputs) if return_outputs else loss
@@ -123,17 +126,22 @@ def train():
         trust_remote_code=True,
         problem_type="single_label_classification",
     )
+    from nn_proj.common.utils import disable_dnabert2_flash_attn
+    disable_dnabert2_flash_attn()   # Triton kernel no longer compiles; same maths in PyTorch
 
     evidential_cfg = EvidentialConfig(
         num_classes=num_labels,
         evidence_activation=evidential_args.evidence_activation,
         loss_type=evidential_args.evidential_loss_type,
         annealing_step=evidential_args.annealing_step,
+        kl_weight=evidential_args.kl_weight,
     )
     wrapper = EvidentialWrapper(base_model, evidential_cfg)
     model = HFEvidentialSeqClassifier(wrapper)
 
     trainer = EvidentialTrainer(
+        callbacks=([transformers.EarlyStoppingCallback(training_args.early_stopping_patience)]
+                   if training_args.early_stopping_patience > 0 else None),
         model=model,
         tokenizer=tokenizer,
         args=training_args,

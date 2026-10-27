@@ -27,7 +27,6 @@ from pathlib import Path
 import pandas as pd
 
 OUT_COLS = ["label", "sequence", "sequence_id", "motif_combo", "num_selected_motifs"]
-SPLITS = ["train", "test_ID", "test_matched_ID", "test_OOD"]
 
 
 def main() -> None:
@@ -43,8 +42,13 @@ def main() -> None:
     manifest = pd.read_csv(args.manifest)
     corpus = pd.read_csv(args.annotated, usecols=["sequence_id", "sequence"])
 
+    # Whatever split names are actually in the manifest -- v1/v2 have 4
+    # (train, test_ID, test_matched_ID, test_OOD), v3 has 6 (adds the
+    # matched-ID/near-OOD pair). Not hardcoded so this script doesn't need
+    # editing every time the split design changes.
+    splits = list(manifest["split"].unique())
     args.outdir.mkdir(parents=True, exist_ok=True)
-    for split in SPLITS:
+    for split in splits:
         rows = manifest[manifest["split"] == split].merge(corpus, on="sequence_id", how="left")
 
         missing = rows["sequence"].isna().sum()

@@ -41,6 +41,7 @@ class EvidentialConfig:
     evidence_activation: str = "softplus"  # "softplus" or "relu"
     loss_type: str = "mse"                 # "mse" (eq. 5) or "ce" (eq. 4, digamma)
     annealing_step: int = 10               # epochs until the KL term reaches full weight
+    kl_weight: float = 1.0                 # maximum KL coefficient (Sensoy et al. use 1; smaller helps with many classes)
 
 
 def evidence_activation(logits: torch.Tensor, kind: str = "softplus") -> torch.Tensor:
@@ -78,6 +79,7 @@ def dirichlet_loss(
     epoch: float,
     annealing_step: int,
     loss_type: str = "mse",
+    kl_weight: float = 1.0,
 ) -> torch.Tensor:
     """
     Per-batch mean evidential loss (Sensoy et al. eq. 3-5). `epoch` is a
@@ -98,7 +100,7 @@ def dirichlet_loss(
     else:
         raise ValueError(f"Unknown loss_type: {loss_type!r}")
 
-    lambda_t = min(1.0, float(epoch) / max(annealing_step, 1))
+    lambda_t = kl_weight * min(1.0, float(epoch) / max(annealing_step, 1))
     alpha_tilde = y + (1.0 - y) * alpha
     kl = _kl_dirichlet_uniform(alpha_tilde)
 
@@ -148,7 +150,13 @@ class HFEvidentialSeqClassifier(nn.Module):
         return self.wrapper.cfg
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        batch = {"input_ids": input_ids, "attention_mask": attention_mask, **kwargs}
+        # Only include attention_mask when there is one: hyenaDNA's tokenizer
+        # reports model_input_names == ["input_ids"], so callers pass None, and
+        # HyenaDNAForSequenceClassification.forward() has no attention_mask
+        # parameter -- inserting the key unconditionally is a TypeError there.
+        batch = {"input_ids": input_ids, **kwargs}
+        if attention_mask is not None:
+            batch["attention_mask"] = attention_mask
         evidence = self.wrapper(batch)
         return {"loss": None, "logits": evidence}
 

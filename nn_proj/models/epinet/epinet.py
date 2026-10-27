@@ -4,6 +4,7 @@ from typing import Any, Callable, Iterable, Optional, Tuple, Type, List, Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 import tqdm
 import os
@@ -39,6 +40,20 @@ class EpinetConfig:
     vocab_size: int = 0 
     conv_embed_dim: int = 8
 
+    # (decided 2026-10-25) priors relative to the base model's logit scale: on the first labeled
+    # training batch the MLP / conv prior outputs are rescaled so that their spread over classes is
+    # prior_scale / conv_prior_scale times the base logits' spread, and the resulting multipliers are
+    # stored as buffers (so evaluation code needs no prior settings). Without this, the same
+    # prior_scale meant a prior ~0.4x the logits on NT but ~0.6x on CARMANIA, and the CARMANIA heads
+    # never learned to cancel it.
+    relative_prior: bool = True
+    # standardize the pooled features fed to the train / prior heads (parameter-free layer norm):
+    # backbones differ by >10x in feature norm
+    normalize_features: bool = True
+    # ablation (reviewer 2, point 7): matched-capacity deterministic control -- same networks and parameter count,
+    # but the index is one fixed vector (stored in the checkpoint) instead of z ~ N(0, I); use with zero priors
+    deterministic_index: bool = False
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ---------------------------------------------------------------------
@@ -56,11 +71,16 @@ class GaussianIndexer(nn.Module):
     spread were not independent of its batch-mates' draws. Fixed per
     R1-4/#8 in .docs/RESUBMISSION_PLAN.md.
     """
-    def __init__(self, index_dim: int):
+    def __init__(self, index_dim: int, deterministic: bool = False):
         super().__init__()
         self.index_dim = index_dim
+        self.deterministic = deterministic
+        if deterministic:      # one fixed index vector, saved with the head
+            self.register_buffer("z0", torch.randn(index_dim, generator=torch.Generator().manual_seed(0)))
     @torch.no_grad()
     def forward(self, batch_size: int, device=None, dtype=None) -> torch.Tensor:
+        if self.deterministic:
+            return self.z0.to(device=device, dtype=dtype or torch.float32).expand(batch_size, -1).clone()
         return torch.randn(batch_size, self.index_dim, device=device, dtype=dtype or torch.float32)
 
 
@@ -209,6 +229,28 @@ class FixedConv1DPriorEnsemble(nn.Module):
 # Epinet definitinos
 # ---------------------------------------------------------------------
 
+def save_epinet_config(cfg: "EpinetConfig", out_dir: str) -> None:
+    """write the EpinetConfig next to the Trainer checkpoints, so evaluation can rebuild non-default heads
+    (index_dim, deterministic_index, ...) instead of assuming the defaults"""
+    import json
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "epinet_config.json"), "w") as f:
+        json.dump({k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(cfg).items()}, f, indent=1)
+
+
+def _register_prior_buffers(module: nn.Module, cfg: "EpinetConfig") -> None:
+    """effective prior multipliers (prior_scale x calibrated gain) live in the state dict, so a saved
+    head carries its own prior settings; `prior_calibrated` = 0 until calibrate_priors() has run"""
+    module.register_buffer("prior_mult", torch.tensor(float(cfg.prior_scale)))
+    module.register_buffer("conv_mult", torch.tensor(float(cfg.conv_prior_scale)))
+    module.register_buffer("prior_calibrated", torch.tensor(0.0))
+
+
+def _spread(x: torch.Tensor) -> torch.Tensor:
+    """mean over examples of the standard deviation over classes"""
+    return x.float().std(dim=-1).mean()
+
+
 class MLPEpinetWithPrior(nn.Module):
     """
     Basic epinet with mlp and matching mlp prior
@@ -224,7 +266,8 @@ class MLPEpinetWithPrior(nn.Module):
         C, Dz = cfg.num_classes, cfg.index_dim
         self.train_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=True, concat_index=cfg.concat_index)
         self.prior_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=False, concat_index=cfg.concat_index)
-        self.indexer = GaussianIndexer(Dz)
+        _register_prior_buffers(self, cfg)
+        self.indexer = GaussianIndexer(Dz, deterministic=getattr(cfg, "deterministic_index", False))
 
     @staticmethod
     def _flatten(x: torch.Tensor) -> torch.Tensor:
@@ -243,7 +286,7 @@ class MLPEpinetWithPrior(nn.Module):
             epi_in = hidden
         train = self.train_head(epi_in, z)
         prior = self.prior_head(epi_in, z)
-        return train + self.cfg.prior_scale * prior
+        return train + self.prior_mult * prior
 
 
 
@@ -256,7 +299,8 @@ class MLPEpinetWithConvPrior(nn.Module):
         self.train_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=True,  concat_index=cfg.concat_index)
         self.prior_head = ProjectedMLP(C, Dz, cfg.hidden_sizes, trainable=False, concat_index=cfg.concat_index)
         self.conv_prior = FixedConv1DPriorEnsemble(cfg, vocab_size=cfg.vocab_size, embed_dim=cfg.conv_embed_dim)
-        self.indexer = GaussianIndexer(Dz)
+        self.indexer = GaussianIndexer(Dz, deterministic=getattr(cfg, "deterministic_index", False))
+        _register_prior_buffers(self, cfg)
 
     def forward(self, hidden: torch.Tensor, inputs: Any, z: torch.Tensor) -> torch.Tensor:
         # hidden: [B, D]
@@ -274,7 +318,7 @@ class MLPEpinetWithConvPrior(nn.Module):
             raise ValueError("Conv prior requires inputs to provide input_ids (HF-style dict).")
 
         convp = self.conv_prior(input_ids, attention_mask, z)
-        return train + self.cfg.prior_scale * prior + self.cfg.conv_prior_scale * convp
+        return train + self.prior_mult * prior + self.conv_mult * convp
 
     def forward_multi(self, hidden: torch.Tensor, inputs: Any, z: torch.Tensor) -> torch.Tensor:
         """Like ``forward``, but for many index samples at once: z is
@@ -310,7 +354,7 @@ class MLPEpinetWithConvPrior(nn.Module):
         basis = self.conv_prior.basis(input_ids, attention_mask)  # [B, Dz, C] -- computed once
         convp = self.conv_prior.contract(basis, z)                # [S, B, C]
 
-        return train + self.cfg.prior_scale * prior + self.cfg.conv_prior_scale * convp
+        return train + self.prior_mult * prior + self.conv_mult * convp
 
 
 # ---------------------------------------------------------------------
@@ -358,6 +402,8 @@ class EpinetWrapper(nn.Module):
         else:
             mu, hidden, extras = feat_out[:3]
         hidden_for_epi = hidden.detach() if self.cfg.stop_grad_features else hidden
+        if getattr(self.cfg, "normalize_features", False):
+            hidden_for_epi = F.layer_norm(hidden_for_epi.float(), hidden_for_epi.shape[-1:]).to(hidden_for_epi.dtype)
 
         # 2) Sample z using hidden's batch size & device
         B = hidden.shape[0]
@@ -404,6 +450,31 @@ class EpinetWrapper(nn.Module):
         return stacked if return_all else stacked.mean(0)
     
 
+    @torch.no_grad()
+    def calibrate_priors(self, batch: Any) -> dict:
+        """Set the prior multipliers so each prior's spread over classes = scale x the base logits'
+        spread on this batch (cfg.relative_prior). Called once, on the first labeled training batch."""
+        ep = self.epinet
+        feat_out = self.feature_fn(self.base, batch)
+        mu, hidden = feat_out[0], feat_out[1]
+        h = hidden.detach()
+        if getattr(self.cfg, "normalize_features", False):
+            h = F.layer_norm(h.float(), h.shape[-1:]).to(h.dtype)
+        z = ep.indexer(batch_size=h.shape[0], device=h.device, dtype=torch.float32)
+        target = _spread(mu)
+        out = {"base_logit_spread": float(target)}
+        p = ep.prior_head(h, z)
+        ep.prior_mult.fill_(float(self.cfg.prior_scale) * float(target / _spread(p).clamp_min(1e-8)))
+        out["prior_mult"] = float(ep.prior_mult)
+        if hasattr(ep, "conv_prior"):
+            inp = batch if isinstance(batch, dict) else {}
+            c = ep.conv_prior(inp.get("input_ids"), inp.get("attention_mask"), z)
+            ep.conv_mult.fill_(float(self.cfg.conv_prior_scale) * float(target / _spread(c).clamp_min(1e-8)))
+            out["conv_mult"] = float(ep.conv_mult)
+        ep.prior_calibrated.fill_(1.0)
+        return out
+
+
 # ---------------------------
 # wrapper for huggingface compatibility
 # ---------------------------
@@ -418,9 +489,26 @@ class HFEpinetSeqClassifier(nn.Module):
     def cfg(self): 
         return self.wrapper.cfg
     
+    def train(self, mode: bool = True):
+        """HF Trainer calls model.train() every step; the frozen base must stay in eval mode, or its
+        dropout perturbs the logits / features the head is fit to (fixed 2026-10-25)."""
+        super().train(mode)
+        self.wrapper.base.eval()
+        return self
+
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         batch = {"input_ids": input_ids, "attention_mask": attention_mask}
         K = self.k_train if self.training else self.k_eval
+        ep = self.wrapper.epinet
+        if (self.training and labels is not None and getattr(self.cfg, "relative_prior", False)
+                and hasattr(ep, "prior_calibrated") and float(ep.prior_calibrated) == 0):
+            print("[epinet] prior calibration:", self.wrapper.calibrate_priors(batch), flush=True)
+        if not self.training and labels is not None and K > 1:
+            # validation / early stopping: NLL of the mixture predictive mean_z softmax(f(x, z)), i.e.
+            # exactly what inference reports (the CE of mean logits ignores the spread across z)
+            logits_all = self.wrapper(batch, n_index_samples=K, return_all=True)        # [K, B, C]
+            logp = torch.logsumexp(F.log_softmax(logits_all.float(), -1), dim=0) - math.log(K)
+            return {"loss": F.nll_loss(logp, labels), "logits": logp}
         if self.training and K > 1 and labels is not None:
             logits_all = self.wrapper(batch, n_index_samples=K, return_all=True) # shape [K, B, C]
             K, B, C = logits_all.shape
