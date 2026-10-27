@@ -283,11 +283,14 @@ def main():
                     help="score one external window set NAME (--extra-csv) with every method, like --darkmatter-only; "
                          "labels from its <rank> column (class taxid, -1 = none) when present, else from taxid")
     ap.add_argument("--extra-csv", default="")
+    ap.add_argument("--fp16-sampling", action="store_true",
+                    help="fp16 autocast for the MC dropout / Epinet / Laplace passes on every backbone except hyenaDNA "
+                         "(whose FFT convolution stays fp32); ~5x faster for NT, which otherwise samples in fp32")
     ap.add_argument("--evidential-only", action="store_true",
                     help="add evidential (evid_*) columns from <ckpt>/evidential to an existing evaluation")
     a = ap.parse_args()
     global FF, AC
-    B = a.backbone; HUB, ml, FF, HALF = BACKBONES[B]; AC = B in AUTOCAST
+    B = a.backbone; HUB, ml, FF, HALF = BACKBONES[B]; AC = B in AUTOCAST or (a.fp16_sampling and B != "hyenaDNA")
     ck_dir = Path(f"{a.ckpt_root}/{B}/{a.rank}/seed{a.seed}")
     def best_ck(d):
         # the checkpoint load_best_model_at_end selected (what train_clean1500.sh trains the Epinet on);
