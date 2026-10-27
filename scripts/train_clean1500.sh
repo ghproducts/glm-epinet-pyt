@@ -56,7 +56,12 @@ ES=()
 # base model (its validation loss is computed at full KL weight; see train_evidential.py) -- then exit.
 if [ "${EVIDENTIAL:-0}" = 1 ]; then
   echo "[$(date +%T)] evidential $B $R seed$S gpu$G epochs<=$EPOCHS patience=$PATIENCE"
-  CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_evidential "${COMMON[@]}" --learning_rate 2e-5 --num_train_epochs $EPOCHS "${ES[@]}" \
+  # (2026-10-27) the squared-error evidential loss collapses with 400+ classes; default to the digamma / cross-entropy
+  # form (Sensoy et al. eq. 4) and early stopping on validation accuracy (the KL-weighted loss rewards collapse)
+  EV_ES=("${ES[@]}"); [ "$PATIENCE" -gt 0 ] && EV_ES=(--eval_strategy steps --eval_steps $HALF --save_strategy steps --save_steps $HALF
+      --early_stopping_patience $PATIENCE --metric_for_best_model ${EVID_METRIC:-eval_accuracy} --greater_is_better ${EVID_GREATER:-True})
+  CUDA_VISIBLE_DEVICES=$G python -m nn_proj.models.$B.train_evidential "${COMMON[@]}" --learning_rate 2e-5 --num_train_epochs $EPOCHS "${EV_ES[@]}" \
+    --evidential_loss_type ${EVID_LOSS:-ce} --annealing_step ${EVID_ANNEAL:-10} --kl_weight ${EVID_KL:-1.0} \
     --run_name c1500_evid_${B}_${R}_s$S --output_dir $OUT/evidential > $LOG/${B}_${R}_s${S}_evidential.log 2>&1
   ls -d $OUT/evidential/checkpoint-* >/dev/null 2>&1 && echo "[$(date +%T)] DONE evidential $B $R seed$S" \
     || echo "[$(date +%T)] FAILED evidential $B $R seed$S"
