@@ -40,6 +40,7 @@ class EvidentialArguments:
     annealing_step: int = field(
         default=10, metadata={"help": "Epochs until the KL regularizer reaches full weight."}
     )
+    kl_weight: float = field(default=1.0, metadata={"help": "Maximum KL coefficient (1 = Sensoy et al.)."})
 
 
 class EvidentialTrainer(transformers.Trainer):
@@ -66,6 +67,7 @@ class EvidentialTrainer(transformers.Trainer):
             epoch=(self.state.epoch or 0.0) if model.training else float(self.evidential_cfg.annealing_step),
             annealing_step=self.evidential_cfg.annealing_step,
             loss_type=self.evidential_cfg.loss_type,
+            kl_weight=getattr(self.evidential_cfg, "kl_weight", 1.0),
         )
         inputs["labels"] = labels  # restore in case the Trainer reuses `inputs` after this call
         return (loss, outputs) if return_outputs else loss
@@ -139,6 +141,7 @@ def train():
         evidence_activation=evidential_args.evidence_activation,
         loss_type=evidential_args.evidential_loss_type,
         annealing_step=evidential_args.annealing_step,
+        kl_weight=evidential_args.kl_weight,
     )
     wrapper = EvidentialWrapper(base_model, evidential_cfg)
     model = HFEvidentialSeqClassifier(wrapper)
